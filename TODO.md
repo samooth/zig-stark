@@ -4,7 +4,7 @@
 - [x] Add unit tests for M31 arithmetic (add/sub/mul/neg/inv/pow, edge cases at modulus boundaries).
 - [x] Add unit tests for CM31 and QM31 arithmetic and extension-tower identities.
 - [x] Verify M31 generator and two-adic root values against reference implementations.
-- [ ] Replace scalar-scalar looped SIMD (`Vec8`) with true vectorized arithmetic (no scalar reduction loop).
+- [x] Replace scalar-scalar looped SIMD (`Vec8`) with true vectorized arithmetic (no scalar reduction loop).
 - [x] Add `toBytes`/`fromBytes` serialization for M31, CM31, QM31.
 
 ## Circle geometry
@@ -39,5 +39,5 @@
 
 ## Testing / build
 - [ ] Add benchmark for NTT at various sizes.
-- [x] Add prover/verifier e2e tests once `stark/` lands.
+- [x] Add prover/verifier e2e tests.
 - [x] Add `zig fmt` formatting check / CI configuration (`zig build fmt`).

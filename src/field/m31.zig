@@ -99,51 +99,40 @@ pub const M31 = struct {
         return M31.fromInt(raw);
     }
 
-    // SIMD operations
+    // SIMD operations: true vectorized arithmetic over @Vector(8, u32) lanes.
+    // Each lane is widened to u64 so products do not overflow, reduced mod
+    // p = 2^31 - 1 via @select (no per-lane scalar reduction loop).
     pub const Vec8 = @Vector(8, u32);
 
     pub fn addVec8(a: Vec8, b: Vec8) Vec8 {
-        const aa: [8]u32 = a;
-        const bb: [8]u32 = b;
-        var result: [8]u32 = undefined;
-        for (0..8) |i| {
-            var s = @as(u64, aa[i]) + @as(u64, bb[i]);
-            if (s >= MODULUS_U64) s -= MODULUS_U64;
-            s = (s & MODULUS_U64) + (s >> 31);
-            if (s >= MODULUS_U64) s -= MODULUS_U64;
-            result[i] = @as(u32, @intCast(s));
-        }
-        return result;
+        const aa: @Vector(8, u64) = a;
+        const bb: @Vector(8, u64) = b;
+        const mask: @Vector(8, u64) = @splat(MODULUS_U64);
+        const sum = aa + bb;
+        const ge = sum >= mask;
+        return @intCast(@select(u64, ge, sum -% mask, sum));
     }
 
     pub fn subVec8(a: Vec8, b: Vec8) Vec8 {
-        const aa: [8]u32 = a;
-        const bb: [8]u32 = b;
-        var result: [8]u32 = undefined;
-        for (0..8) |i| {
-            if (aa[i] >= bb[i]) {
-                result[i] = aa[i] - bb[i];
-            } else {
-                result[i] = MODULUS - (bb[i] - aa[i]);
-            }
-        }
-        return result;
+        const aa: @Vector(8, u64) = a;
+        const bb: @Vector(8, u64) = b;
+        const mask: @Vector(8, u64) = @splat(MODULUS_U64);
+        const ge = aa >= bb;
+        const direct = aa -% bb;
+        const wrap = aa + (mask - bb);
+        return @intCast(@select(u64, ge, direct, wrap));
     }
 
     pub fn mulVec8(a: Vec8, b: Vec8) Vec8 {
-        const aa: [8]u32 = a;
-        const bb: [8]u32 = b;
-        var result: [8]u32 = undefined;
-        for (0..8) |i| {
-            const prod = @as(u64, aa[i]) * @as(u64, bb[i]);
-            const lo = @as(u32, @intCast(prod & MODULUS_U64));
-            const hi = @as(u32, @intCast(prod >> 31));
-            var r = @as(u64, lo) + @as(u64, hi);
-            if (r >= MODULUS_U64) r -= MODULUS_U64;
-            if (r >= MODULUS_U64) r -= MODULUS_U64;
-            result[i] = @as(u32, @intCast(r));
-        }
-        return result;
+        const aa: @Vector(8, u64) = a;
+        const bb: @Vector(8, u64) = b;
+        const mask: @Vector(8, u64) = @splat(MODULUS_U64);
+        const prod = aa * bb;
+        // prod = lo + hi * 2^31, so prod == lo + hi (mod 2^31 - 1).
+        const shift: @Vector(8, u6) = @splat(31);
+        const sum = (prod & mask) + (prod >> shift);
+        const ge = sum >= mask;
+        return @intCast(@select(u64, ge, sum -% mask, sum));
     }
 };
 
@@ -282,6 +271,27 @@ test "M31 SIMD matches scalar" {
         a_arr[i] = rnd.uintLessThan(u32, M31.MODULUS);
         b_arr[i] = rnd.uintLessThan(u32, M31.MODULUS);
     }
+    const a: M31.Vec8 = a_arr;
+    const b: M31.Vec8 = b_arr;
+    const add: [8]u32 = M31.addVec8(a, b);
+    const sub: [8]u32 = M31.subVec8(a, b);
+    const mul: [8]u32 = M31.mulVec8(a, b);
+    for (0..8) |i| {
+        const x = M31.fromInt(a_arr[i]);
+        const y = M31.fromInt(b_arr[i]);
+        try std.testing.expectEqual(x.add(y).value, add[i]);
+        try std.testing.expectEqual(x.sub(y).value, sub[i]);
+        try std.testing.expectEqual(x.mul(y).value, mul[i]);
+    }
+}
+
+test "M31 SIMD edge cases" {
+    const zero = M31.zero();
+    const one = M31.one();
+    const max = M31.fromInt(M31.MODULUS - 1);
+    const max2 = M31.fromInt(M31.MODULUS - 2);
+    const a_arr = [_]u32{ max.value, zero.value, one.value, max2.value, max.value, max.value, one.value, zero.value };
+    const b_arr = [_]u32{ one.value, max.value, max.value, max.value, zero.value, max2.value, max2.value, max.value };
     const a: M31.Vec8 = a_arr;
     const b: M31.Vec8 = b_arr;
     const add: [8]u32 = M31.addVec8(a, b);
