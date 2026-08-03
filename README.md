@@ -4,7 +4,7 @@ A STARK (Scalable Transparent Argument of Knowledge) proof system implemented in
 
 ## Status
 
-Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/stark/` handle any AIR implementing the `GenericStark` interface, and ship with two complete examples: a Fibonacci sequence and a single linear ML layer. 64 unit tests pass with no leaks.
+Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/stark/` handle any AIR implementing the `GenericStark` interface, and ship with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer. 72 tests pass (69 unit + 3 end-to-end) with no leaks.
 
 ## Documentation
 
@@ -18,7 +18,7 @@ Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/stark/` handl
 src/
   field/        M31, CM31, QM31 field arithmetic + SIMD helpers
   circle/       Circle point group, domains, cosets
-  ntt/          Classic NTT, SIMD butterflies, naive circle FFT
+  ntt/          Classic NTT, SIMD butterflies, circle FFT (recursive fold)
   air/          AIR abstractions: frames, constraints, execution trace
   poly/         Univariate polynomial helpers
   hash/         Blake3 hash + field-element hashing
@@ -29,9 +29,10 @@ src/
   utils/        Bit manipulation and SIMD utilities
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
-  rescue/       Rescue hash STARK example (TODO)
+  rescue/       STARK proving a Rescue permutation
   ml_linear/    STARK proving a linear layer y = w . x
 tests/          End-to-end tests
+benchmarks/     NTT / circle-FFT benchmarks (zig build bench)
 ```
 
 ## Building
@@ -41,12 +42,14 @@ Requires Zig 0.16.x.
 ```sh
 zig build            # build examples
 zig build test       # run unit and e2e tests
+zig build bench      # run NTT benchmarks (-Doptimize=ReleaseFast recommended)
 ```
 
 Run the examples:
 
 ```sh
 ./zig-out/bin/fibonacci
+./zig-out/bin/rescue
 ./zig-out/bin/ml_linear
 ```
 
