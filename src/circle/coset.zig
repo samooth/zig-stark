@@ -39,6 +39,30 @@ pub const CircleCoset = struct {
         std.debug.assert(self.log_size > 0);
         return CircleCoset.new(self.offset.double(), self.step.double(), self.log_size - 1);
     }
+
+    /// The conjugate coset: `-initial - <step>`.
+    pub fn conjugate(self: CircleCoset) CircleCoset {
+        return CircleCoset.new(self.offset.neg(), self.step.neg(), self.log_size);
+    }
+
+    /// The canonic half-coset of a circle domain of order 2^log_size:
+    /// the points `{ B^(2^(30-log_size)) ⊕ <B^(2^(32-log_size))> }`, where
+    /// `B = generator().neg()`.
+    ///
+    /// The full circle domain is this coset disjoint-union its conjugate. The
+    /// ordering matches the convention used by stwo's O(n log n) circle FFT,
+    /// and avoids the identity point (where circle interpolation divides by y).
+    ///
+    /// Note: `generator()` and its negation differ by an element of order 4,
+    /// so `canonicHalf` is only guaranteed to match stwo's traversal for
+    /// `log_size <= 28`; the FFT is only exercised up to that size.
+    pub fn canonicHalf(log_size: u32) CircleCoset {
+        std.debug.assert(log_size >= 1 and log_size <= 28);
+        const gen = CirclePoint.generator().neg();
+        const offset = gen.mulScalar(@as(u64, 1) << @intCast(30 - log_size));
+        const step = gen.mulScalar(@as(u64, 1) << @intCast(32 - log_size));
+        return CircleCoset.new(offset, step, log_size - 1);
+    }
 };
 
 test "circle coset properties" {
@@ -77,5 +101,44 @@ test "circle coset avoids canonical subgroup" {
             if (p.x.eq(q.x) and p.y.eq(q.y)) in_domain = true;
         }
         try std.testing.expect(!in_domain);
+    }
+}
+
+test "circle coset conjugate negates points" {
+    const coset = CircleCoset.canonicHalf(4);
+    const conj = coset.conjugate();
+    try std.testing.expectEqual(@as(usize, 8), conj.size());
+    for (0..conj.size()) |i| {
+        try std.testing.expect(conj.at(i).x.eq(coset.at(i).x));
+        try std.testing.expect(conj.at(i).y.eq(coset.at(i).y.neg()));
+    }
+}
+
+test "circle coset canonicHalf properties" {
+    var log_size: u32 = 1;
+    while (log_size <= 8) : (log_size += 1) {
+        const coset = CircleCoset.canonicHalf(log_size);
+        try std.testing.expectEqual(@as(usize, 1) << @intCast(log_size - 1), coset.size());
+        // all points on the circle and distinct
+        const n = coset.size();
+        for (0..n) |i| {
+            try std.testing.expect(coset.at(i).onCircle());
+            const p = coset.at(i);
+            for (0..i) |j| {
+                const q = coset.at(j);
+                try std.testing.expect(!(p.x.eq(q.x) and p.y.eq(q.y)));
+            }
+        }
+        // the domain coset ++ conjugate has 2^log_size distinct points
+        const conj = coset.conjugate();
+        const total = n * 2;
+        var idx: usize = 0;
+        while (idx < total) : (idx += 1) {
+            const p = if (idx < n) coset.at(idx) else conj.at(idx - n);
+            for (0..idx) |j| {
+                const q = if (j < n) coset.at(j) else conj.at(j - n);
+                try std.testing.expect(!(p.x.eq(q.x) and p.y.eq(q.y)));
+            }
+        }
     }
 }

@@ -16,8 +16,8 @@
 ## NTT
 - [x] Add round-trip test: `nttForward` then `nttInverse` returns the original vector.
 - [ ] Add SIMD NTT correctness tests (compare against `nttClassic`).
-- [ ] Replace naive circle FFT with recursive fold algorithm (O(n log n)).
-- [ ] Replace naive Lagrange circle IFFT with optimized inverse transform.
+- [x] Replace naive circle FFT with recursive fold algorithm (O(n log n)).
+- [x] Replace naive Lagrange circle IFFT with optimized inverse transform.
 - [x] Support arbitrary coset evaluation (eval on `CircleCoset`).
 
 ## AIR
