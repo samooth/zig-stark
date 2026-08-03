@@ -76,6 +76,23 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(ml_example);
 
+    // Benchmarks
+    const bench_ntt = b.addExecutable(.{
+        .name = "bench_ntt",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/ntt/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
+        }),
+    });
+    b.installArtifact(bench_ntt);
+    const run_bench_ntt = b.addRunArtifact(bench_ntt);
+    const bench_step = b.step("bench", "Run NTT benchmarks (use -Doptimize=ReleaseFast)");
+    bench_step.dependOn(&run_bench_ntt.step);
+
     // Formatting check
     const fmt_check = b.addFmt(.{ .paths = &.{"."}, .check = true });
     const fmt_step = b.step("fmt", "Check code formatting (zig fmt --check)");

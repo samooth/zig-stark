@@ -10,12 +10,12 @@
 ## Circle geometry
 - [x] Add tests for circle point group properties (closure, identity, inverse, `onCircle`).
 - [x] Add tests for `CircleDomain` and `CircleCoset` (size, `get`/`at`, `half`).
-- [ ] Implement faster scalar multiplication (windowed / precomputed tables) for domain generation.
+- [x] Implement faster scalar multiplication (windowed / precomputed tables) for domain generation.
 - [x] Verify generator coordinates `(1268011823, 2)` against references.
 
 ## NTT
 - [x] Add round-trip test: `nttForward` then `nttInverse` returns the original vector.
-- [ ] Add SIMD NTT correctness tests (compare against `nttClassic`).
+- [x] Add SIMD NTT correctness tests (compare against `nttClassic`).
 - [x] Replace naive circle FFT with recursive fold algorithm (O(n log n)).
 - [x] Replace naive Lagrange circle IFFT with optimized inverse transform.
 - [x] Support arbitrary coset evaluation (eval on `CircleCoset`).
@@ -38,6 +38,6 @@
 - [x] `rescue`: STARK proving a Rescue permutation (degree-5 sbox constraints).
 
 ## Testing / build
-- [ ] Add benchmark for NTT at various sizes.
+- [x] Add benchmark for NTT at various sizes.
 - [x] Add prover/verifier e2e tests.
 - [x] Add `zig fmt` formatting check / CI configuration (`zig build fmt`).
