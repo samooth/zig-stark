@@ -41,6 +41,11 @@ pub const BoundaryAssertion = struct {
 ///     `x` is the evaluation point; for row-dependent constraints it should be
 ///     written as a polynomial in `x` that vanishes on H.
 ///   - `boundaryAssertions(public_inputs, n, out)`: fills boundary assertions
+///   - `maxConstraintDegree(n)`: the maximum degree (in x) of any transition
+///     constraint polynomial, assuming column polynomials have degree < n.
+///     This sizes the FRI commitment for the DEEP combined polynomial; AIRs
+///     with non-linear constraints (e.g. an x^5 sbox) must return more than
+///     n - 1 so the quotient's degree fits the FRI code.
 pub const StarkParams = struct {
     trace_log: u8,
     log_blowup: u8 = 3,
@@ -55,14 +60,6 @@ pub const StarkParams = struct {
     }
     pub fn shift(self: StarkParams) usize {
         return @as(usize, 1) << @intCast(self.log_blowup);
-    }
-    pub fn friParams(self: StarkParams) Fri.FriParams {
-        return .{
-            .log_size = self.trace_log,
-            .log_blowup = self.log_blowup,
-            .num_queries = self.num_queries,
-            .remainder_log = self.remainder_log,
-        };
     }
 };
 
@@ -105,6 +102,39 @@ pub fn GenericStark(comptime Air: type) type {
         const m = Air.num_columns;
         const num_trans = Air.num_transition_constraints;
         const num_bound = Air.num_boundary;
+
+        /// The DEEP combined polynomial g has degree < degree_g. With d_c =
+        /// Air.maxConstraintDegree(n): the transition part of the composition
+        /// has degree <= d_c + 1, the boundary part <= 2n - 2, so the quotient
+        /// Q = Hc / Z_H has degree <= max(d_c + 1, 2n - 2) - n and
+        ///   degree_g = max(n - 1, d_c - n).
+        /// The FRI log size is the smallest power-of-two bound above degree_g.
+        fn compositionLogSize(n: usize) u8 {
+            const d_c = Air.maxConstraintDegree(n);
+            const degree_g = @max(n - 1, d_c -| n);
+            var log: u8 = 0;
+            var bound: usize = 1;
+            while (bound <= degree_g) : (log += 1) bound <<= 1;
+            return log;
+        }
+
+        /// FRI parameters for g. The FRI domain equals the trace domain
+        /// D (size 2^(trace_log + log_blowup)); the FRI blowup is the rate gap
+        /// between the combined-degree bound and that domain.
+        fn friParams(params: StarkParams) Fri.FriParams {
+            const n = params.traceLen();
+            const log_size = Self.compositionLogSize(n);
+            const domain_log = params.trace_log + params.log_blowup;
+            std.debug.assert(log_size <= domain_log);
+            std.debug.assert(params.remainder_log < domain_log);
+            std.debug.assert(params.remainder_log >= domain_log - log_size);
+            return .{
+                .log_size = log_size,
+                .log_blowup = domain_log - log_size,
+                .num_queries = params.num_queries,
+                .remainder_log = params.remainder_log,
+            };
+        }
 
         /// `trace` is a list of `num_columns` column slices, each of length
         /// 2^trace_log. `public_inputs` drives the boundary assertions.
@@ -266,7 +296,7 @@ pub fn GenericStark(comptime Air: type) type {
             }
 
             // Commit g via FRI on the same domain.
-            const fri_proof = try Fri.proveCodeword(allocator, params.friParams(), g_codeword, channel);
+            const fri_proof = try Fri.proveCodeword(allocator, Self.friParams(params), g_codeword, channel);
 
             // Per-query reveals of trace and quotient values.
             const queries = try allocator.alloc(QueryReveal, params.num_queries);
@@ -349,7 +379,7 @@ pub fn GenericStark(comptime Air: type) type {
             for (gammas) |*g| g.* = channel.sampleQM31();
 
             // FRI verification (also samples FRI alphas / remainder / queries).
-            if (!try Fri.verify(allocator, params.friParams(), &proof.fri, channel)) return false;
+            if (!try Fri.verify(allocator, Self.friParams(params), &proof.fri, channel)) return false;
 
             const last_point = w.pow(@as(u64, @intCast(n - 1)));
             for (proof.queries, 0..) |qv, qi| {
@@ -477,6 +507,12 @@ pub const FibAir = struct {
         out[0] = next[0].sub(current[1]);
         // b_{i+1} = a_i + b_i
         out[1] = next[1].sub(current[0]).sub(current[1]);
+    }
+
+    /// Both constraints are linear in the columns, so as polynomials in x
+    /// they have degree < n.
+    pub fn maxConstraintDegree(n: usize) usize {
+        return n - 1;
     }
 
     pub fn boundaryAssertions(public: PublicInputs, n: usize, out: []BoundaryAssertion) void {

@@ -93,6 +93,13 @@ const LinearAir = struct {
         out[1] = .{ .column = 0, .step = n - 1, .value = public.claimed_y };
     }
 
+    /// The constraint is linear in the accumulator and the interpolated
+    /// increment polynomial, so its degree in x is < n.
+    pub fn maxConstraintDegree(n_rows: usize) usize {
+        std.debug.assert(n_rows == n);
+        return n - 1;
+    }
+
     pub fn generateTrace(allocator: std.mem.Allocator, x: []const QM31) ![]const []const QM31 {
         std.debug.assert(x.len == n);
         const cols = try allocator.alloc([]const QM31, num_columns);

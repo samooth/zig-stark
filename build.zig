@@ -56,6 +56,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("examples/rescue/src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
         }),
     });
     b.installArtifact(rescue_example);
@@ -72,4 +75,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.installArtifact(ml_example);
+
+    // Formatting check
+    const fmt_check = b.addFmt(.{ .paths = &.{"."}, .check = true });
+    const fmt_step = b.step("fmt", "Check code formatting (zig fmt --check)");
+    fmt_step.dependOn(&fmt_check.step);
 }
