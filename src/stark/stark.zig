@@ -37,7 +37,9 @@ pub const BoundaryAssertion = struct {
 ///
 /// The AIR type must provide:
 ///   - `num_columns`, `num_transition_constraints`, `num_boundary`
-///   - `evalTransition(current, next, out)`: writes transition constraints
+///   - `evalTransition(x, current, next, out)`: writes transition constraints.
+///     `x` is the evaluation point; for row-dependent constraints it should be
+///     written as a polynomial in `x` that vanishes on H.
 ///   - `boundaryAssertions(public_inputs, n, out)`: fills boundary assertions
 pub const StarkParams = struct {
     trace_log: u8,
@@ -200,7 +202,7 @@ pub fn GenericStark(comptime Air: type) type {
                         current[j] = codewords[j][i];
                         next[j] = codewords[j][(i + shift) % N];
                     }
-                    Air.evalTransition(current, next, res);
+                    Air.evalTransition(d_points[i], current, next, res);
                     var h_val = F.zero();
                     for (0..num_trans) |k| {
                         h_val = h_val.add(alphas[k].mul(res[k].mul(d_points[i].sub(last_point))));
@@ -386,7 +388,7 @@ pub fn GenericStark(comptime Air: type) type {
                 const next = qv.values[m .. 2 * m];
                 const res = try allocator.alloc(F, num_trans);
                 defer allocator.free(res);
-                Air.evalTransition(current, next, res);
+                Air.evalTransition(x0, current, next, res);
                 var h_val = F.zero();
                 for (0..num_trans) |k| {
                     h_val = h_val.add(alphas[k].mul(res[k].mul(x0.sub(last_point))));
@@ -438,7 +440,7 @@ pub fn GenericStark(comptime Air: type) type {
 
             const res = try allocator.alloc(F, num_trans);
             defer allocator.free(res);
-            Air.evalTransition(current, next, res);
+            Air.evalTransition(z, current, next, res);
             const last_point = w.pow(@as(u64, @intCast(n - 1)));
             var h_val = F.zero();
             for (0..num_trans) |k| {
@@ -469,7 +471,8 @@ pub const FibAir = struct {
     };
 
     /// Frame: current[j] = column j at step i, next[j] = column j at step i+1.
-    pub fn evalTransition(current: []const QM31, next: []const QM31, out: []QM31) void {
+    pub fn evalTransition(x: QM31, current: []const QM31, next: []const QM31, out: []QM31) void {
+        _ = x;
         // a_{i+1} = b_i
         out[0] = next[0].sub(current[1]);
         // b_{i+1} = a_i + b_i

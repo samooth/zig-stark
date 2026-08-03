@@ -34,6 +34,8 @@
 
 ## Examples
 - [x] `fibonacci`: executable STARK proof for a Fibonacci AIR.
+- [x] `ml_linear`: STARK for a linear ML (matrix-vector) computation.
+- [ ] `rescue`: STARK proving a Rescue permutation.
 - [ ] `rescue`: STARK proving a Rescue permutation.
 - [ ] `ml_linear`: STARK for a linear ML (matrix-vector) computation.
 

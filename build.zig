@@ -66,6 +66,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("examples/ml_linear/src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
         }),
     });
     b.installArtifact(ml_example);
