@@ -1,6 +1,6 @@
 # Examples
 
-Two end-to-end STARK proofs ship with the repository. Both follow the same
+Three end-to-end STARK proofs ship with the repository. All follow the same
 shape: generate a valid execution trace, run the prover, run the verifier, and
 confirm that a forged claim is rejected.
 
@@ -10,6 +10,7 @@ Build and run:
 zig build
 ./zig-out/bin/fibonacci
 ./zig-out/bin/ml_linear
+./zig-out/bin/rescue
 ```
 
 ## Fibonacci
@@ -135,7 +136,84 @@ Key requirements:
 - boundary assertions pin specific rows to public values; the verifier uses them
   both to rebuild the composition and to replay the transcript.
 
+## AIRs with lookups (preprocessed columns)
+
+To add a LogUp lookup relation to an AIR, declare the preprocessed and lookup
+metadata and pass the table columns to `proveWithPreprocessed` instead of
+`prove`:
+
+```zig
+const MyLookupAir = struct {
+    pub const num_columns = 3; // e.g. [value, mult, selector]
+    pub const num_preprocessed = 1; // [table]
+    pub const num_transition_constraints = 0;
+    pub const num_boundary = 0;
+
+    // One relation: the combined key of the selector row must appear in the
+    // table with the given multiplicity.
+    pub const num_lookup_columns = 1;
+    pub const num_lookup_relations = 1;
+    pub const lookup_selector_columns = [1]usize{2};
+    pub const lookup_key_columns = [1][]const usize{&.{0}};
+    pub const lookup_table_columns = [1][]const usize{&.{0}};
+    pub const lookup_multiplicity_columns = [1]usize{1};
+    // ... evalTransition / boundaryAssertions / maxConstraintDegree as usual ...
+};
+```
+
+Prove with both the trace and the preprocessed table:
+
+```zig
+const Stark = stark.GenericStark(MyLookupAir);
+var proof = try Stark.proveWithPreprocessed(
+    alloc, params, .{}, table, trace, &pchan,
+);
+```
+
+Requirements specific to lookup AIRs:
+
+- `num_lookup_relations > 0` implies `num_preprocessed > 0` and
+  `num_lookup_columns > 0`, and the AIR must declare
+  `lookup_selector_columns`, `lookup_key_columns`, `lookup_table_columns` and
+  `lookup_multiplicity_columns` (per relation).
+- The honest trace must *interleave* the lookup rows (selector = 1) and the
+  table rows (selector = 0); the LogUp running-sum argument is cyclic, so the
+  multiset of lookup keys (weighted by multiplicity) must equal the multiset of
+  table entries across the whole trace.
+- The accumulator column is appended internally at index `num_columns + r`; a
+  boundary assertion `acc[0] = 0` is added automatically.
+
+See [`protocol.md`](protocol.md) for the LogUp protocol details and the exact
+transcript order.
+
 ## Rescue
 
-`examples/rescue/src/main.zig` is a placeholder for a STARK over the Rescue
-permutation. It currently prints `(TODO)`.
+`examples/rescue/src/main.zig` proves the correct evaluation of a Rescue
+permutation: a permutation over a 4-element QM31 state (`s = 4`) with
+`n - 1 = 7` rounds. The AIR has four columns (one per state element), four
+transition constraints and eight boundary assertions.
+
+The Rescue sbox is `x^5`, so the transition constraints are degree-5 polynomials
+in the columns — this is the motivating example for the AIR-level
+`maxConstraintDegree(n)`: as polynomials in the evaluation point `x` the
+constraints have degree `5 * (n - 1)`, which is far above the `n - 1` degree of
+the trace columns, and the FRI commitment for the DEEP combination must be sized
+accordingly (see `src/stark/stark.zig`).
+
+The round constants depend on the row, so they are interpolated over the trace
+subgroup `H` and evaluated through `x` inside `evalTransition`. Only the forward
+sbox is used — the M31 inverse sbox `x -> x^(1/5)` is a high-degree polynomial
+that cannot appear in a low-degree constraint. The round-constant polynomials
+are shared between prover and verifier via `RescueAir.prepare` (called before
+`prove`/`verify`), and `num_rounds = n - 1` rounds are applied to the public
+`initial` state to obtain the claimed `final` state.
+
+Running it with `n = 8`:
+
+```
+initial state:  1 2 3 4
+final state:    1620044097 654387451 611328641 1042552547
+verifier accepted proof: true
+verifier rejected forged final state: true
+claim matches direct round computation
+```

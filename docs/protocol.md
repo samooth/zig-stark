@@ -21,6 +21,9 @@ evaluations on the larger domain `D = FRI_OFFSET * <w_ev>` of size
 | `D` | evaluation coset `FRI_OFFSET * <w_ev>` |
 | `Z_H(x) = x^n - 1` | vanishing polynomial of `H` |
 | `m` | number of AIR columns |
+| `n_pre` | number of preprocessed (table) columns |
+| `n_rel` | number of lookup relations |
+| `m_total = m + n_rel` | committed trace columns (AIR + accumulators) |
 | `C_k` | transition constraint polynomials |
 
 ## The AIR interface
@@ -32,10 +35,72 @@ An AIR provides:
   `x` is the evaluation point, so row-dependent constraints can be written as
   polynomials in `x` (see the `ml_linear` example);
 - `boundaryAssertions(public_inputs, n, out)` — fills the boundary assertions
-  `(column, step, value)`.
+  `(column, step, value)`;
+- `maxConstraintDegree(n)` — an upper bound on the degree of any transition
+  constraint as a polynomial in `x`; it sizes the FRI commitment for the DEEP
+  combination (see the `rescue` example, whose degree-5 sbox requires
+  `5*(n-1)`);
+- optionally, the LogUp lookup metadata listed below.
 
 The prover interpolates each trace column `f_j` on `H` (a polynomial of degree
 `< n`) and evaluates it on `D`; `codewords[j]` is the codeword of `f_j`.
+
+## LogUp lookups (optional)
+
+An AIR can additionally declare lookups, checked with the **LogUp** (logarithmic
+derivative) multiset argument. This is fully optional: an AIR without lookups is
+unchanged and the `2m + 1`/`m` quantities below all reduce to the plain case.
+
+**Declared metadata.** `GenericStark` inspects the AIR type at compile time:
+
+- `num_preprocessed`: number of preprocessed (lookup table) columns;
+- `num_lookup_columns`: number of columns in each combined lookup key;
+- `num_lookup_relations`: number of independent lookup relations;
+- per relation `r`, the column indices `lookup_selector_columns[r]`,
+  `lookup_key_columns[r]` (a list of `num_lookup_columns` trace columns),
+  `lookup_table_columns[r]` (the matching preprocessed table columns), and
+  `lookup_multiplicity_columns[r]` (the trace column holding the multiplicity).
+
+**Combined keys.** For each relation `r`, after the trace roots are absorbed the
+prover samples one challenge `alpha_col[j]` per lookup column and one challenge
+`alpha_rel[r]` per relation. Each row's lookup key is the linear combination
+
+```
+key_i  = sum_j alpha_col[j] * trace_row[lookup_key_columns[r][j]]
+tkey_i = sum_j alpha_col[j] * table_row[lookup_table_columns[r][j]]
+```
+
+and the selector `sel_i` and multiplicity `m_i` come from the corresponding
+trace columns. The relation then claims the multiset equality
+
+```
+sum_i sel_i * m_i / (alpha_rel - key_i)   =   sum_i (1 - sel_i) / (alpha_rel - tkey_i)
+```
+
+**Accumulator columns.** For each relation, `GenericStark` appends one extra
+trace column at index `m + r` (so `m_total = m + n_rel`). The honest prover
+fills it as a running sum over rows with `acc[0] = 0`:
+
+```
+acc[i+1] = acc[i] + sel_i * m_i / (alpha_rel - key_i) - (1 - sel_i) / (alpha_rel - tkey_i)
+```
+
+With `acc[0] = 0` the last-row wrap `acc[n] = acc[0]` is exactly the statement
+that the two sums above are equal. To make this a *single* cyclic constraint
+that holds on every row of `H` (including the last, where `acc` wraps), the
+prover/verifier use the denominator-cleared identity
+
+```
+C_r = sel * [(acc_next - acc)(alpha_rel - key) - m]
+    + (1 - sel) * [(acc_next - acc)(alpha_rel - tkey) + 1]
+```
+
+which vanishes on each row precisely when `acc` follows the running sum. Because
+the accumulator depends on the sampled challenges `alpha`, it is committed in a
+**second phase**: preprocessed roots → trace roots → sample `alpha_col`/`alpha_rel`
+→ commit accumulator columns → sample transition/boundary weights. Additionally
+the selector is constrained to be a bit (`sel(1 - sel) = 0`) and `acc[0] = 0` is
+appended to the boundary assertions.
 
 ## 1. Commit the trace
 
@@ -46,14 +111,21 @@ For each column `j`:
 - build a Merkle tree over `hash(f_j(d_i))` and absorb its root into the
   transcript (`Channel`).
 
+Preprocessed columns are committed first (roots absorbed before the trace
+roots); the synthesized accumulator columns are committed last, after the
+lookup challenges are sampled.
+
 ## 2. Sample challenge weights
 
-- absorb all trace roots;
-- sample `num_transition_constraints` field elements `alpha_k` (transition
+- absorb all preprocessed and trace roots (in the order committed above);
+- sample the lookup challenges `alpha_col[j]`, `alpha_rel[r]` (if any), then
+  absorb the accumulator roots;
+- sample `num_transition_constraints + 2*n_rel` field elements `alpha_k`
+  (transition weights, including the cyclic LogUp and selector-binarity
   weights);
 - compute the boundary assertions from the public inputs (deterministic, not
-  absorbed);
-- sample `num_boundary` field elements `beta_k` (boundary weights).
+  absorbed) and append the synthesized `acc[0] = 0` assertions;
+- sample `num_boundary + n_rel` field elements `beta_k` (boundary weights).
 
 ## 3. Build the composition and the quotient
 
@@ -68,10 +140,15 @@ and the transition values `res = C(current, next)`. The composition is
 
 ```
 Hc(x) = sum_k alpha_k * C_k(x) * (x - w^(n-1))
+      + sum_r alpha_trans+r * C_r(x)          // cyclic LogUp constraints
+      + sum_r alpha_trans+n_rel+r * sel_r(1 - sel_r)
       + sum_k beta_k  * (f_{col_k}(x) - v_k) * Z_H(x) / (x - p_k)
 ```
 
-where `p_k = w^step_k` is the point of the k-th boundary assertion.
+where `p_k = w^step_k` is the point of the k-th boundary assertion. The LogUp
+constraints and selector-binarity constraints are **cyclic**: they carry no
+`(x - w^(n-1))` factor, so they are enforced on every row of `H` including the
+last (where the accumulator wraps to `acc[0] = 0`).
 
 The factor `(x - w^(n-1))` on the transition constraints is the standard trick
 that allows constraints to be enforced only on `H \ {w^(n-1)}` (the last row has
@@ -93,11 +170,13 @@ commits it, and absorbs the quotient root.
 
 - sample `z <- F`;
 - compute `wz = w * z` and the evaluations
-  `deep_evals = [f_j(z), f_j(w*z)  (j = 0..m-1),  Q(z)]` (length `2m + 1`);
+  `deep_evals = [f_j(z), f_j(w*z)  (j = 0..m_total-1),  Q(z)]` (length
+  `2*m_total + 1`, where `m_total = m + n_rel` includes the accumulator
+  columns);
 - `Q(z)` is computed directly by evaluating `Hc(z) / Z_H(z)` (Horner, no
   interpolation of the quotient);
 - absorb `deep_evals`;
-- sample `2m + 1` DEEP weights `gamma`.
+- sample `2*m_total + 1` DEEP weights `gamma`.
 
 ## 5. Commit the DEEP combination via FRI
 
@@ -108,6 +187,9 @@ g(x) = sum_j gamma_j        * (f_j(x)      - f_j(z))   / (x - z)
      + sum_j gamma_{m+j}    * (f_j(w*x)    - f_j(w*z)) / (x - z)
      +       gamma_{2m}     * (Q(x)        - Q(z))     / (x - z)
 ```
+
+where `m` is replaced by `m_total = m + n_rel` when lookups are present, so `g`
+combines the trace, accumulator and quotient codewords.
 
 Every quotient `(p(x) - p(z))/(x - z)` is a polynomial (the quotient of `p` by
 `(x - z)`), so `g` has degree `< 2^log_size`. The prover evaluates `g` on `D`
@@ -120,20 +202,21 @@ domain index `p0`. The prover reveals (all with Merkle authentication paths,
 in **column-major** order):
 
 ```
-values = [f_0(x0) ... f_{m-1}(x0),    // x0 = d_p0
-          f_0(w*x0) ... f_{m-1}(w*x0),
-          Q(x0)]
+values = [f_0(x0) ... f_{m_total-1}(x0),    // trace + accumulator, x0 = d_p0
+          f_0(w*x0) ... f_{m_total-1}(w*x0),
+          Q(x0),
+          pre_0(x0) ... pre_{n_pre-1}(x0)]  // preprocessed (if any)
 ```
 
 The verifier checks, for each query:
 
 1. **Merkle authentication** of every revealed value against the committed
-   trace roots and quotient root;
+   preprocessed, trace, accumulator and quotient roots;
 2. **DEEP identity**: the FRI first-layer leaf at `p0` equals
    `g(x0)` computed from the revealed values and `deep_evals`;
 3. **Constraint identity**: `Hc(x0) == Z_H(x0) * Q(x0)`, where `Hc(x0)` is
-   recomputed from the revealed `current`/`next` values and the boundary
-   assertions.
+   recomputed from the revealed `current`/`next` values (including the
+   accumulator and preprocessed columns) and the boundary assertions.
 
 ## FRI
 
@@ -181,13 +264,16 @@ the same `alpha_i` and the same query indices, then checks:
 Prover and verifier must drive the `Channel` identically:
 
 ```
+absorb preprocessed roots (one per column, if any)
 absorb trace roots (one per column)
-sample alpha_k                      // transition weights
-sample beta_k                       // boundary weights
+sample alpha_col[j] and alpha_rel[r]        // lookup challenges (if any)
+absorb accumulator roots (one per relation, if any)
+sample alpha_k                              // transition weights (+ cyclic LogUp)
+sample beta_k                               // boundary weights
 absorb quotient root
 sample z
-absorb deep_evals                   // length 2m+1
-sample gamma_j                      // DEEP weights
+absorb deep_evals                           // length 2*m_total+1
+sample gamma_j                              // DEEP weights
 [FRI] absorb root_i, sample alpha_i (per layer)
 [FRI] absorb remainder
 [FRI] sample query indices

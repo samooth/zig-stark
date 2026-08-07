@@ -8,7 +8,9 @@ DEEP method.
 
 The current implementation is a complete **DEEP-FRI STARK**: prover and verifier
 for any AIR that fits the `GenericStark` interface, with end-to-end proofs for a
-Fibonacci sequence and for a single linear ML layer.
+Fibonacci sequence and for a single linear ML layer. AIRs may optionally add
+preprocessed (lookup table) columns checked with a **LogUp multiset argument**
+(e.g. range checks), committed in a second protocol phase.
 
 ## Field tower
 
@@ -35,10 +37,11 @@ src/
   merkle/       Merkle tree commit / open / verify
   channel/      Fiat-Shamir transcript (absorb / sample)
   fri/          FRI low-degree test (commit, fold, queries)
-  stark/        DEEP-FRI STARK prover / verifier + the Fibonacci AIR
+  stark/        DEEP-FRI STARK prover / verifier (incl. LogUp lookups) + test AIRs
   utils/        Bit manipulation and SIMD utilities
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
+  rescue/       STARK proving a Rescue permutation (degree-5 sbox)
   ml_linear/    STARK proving a single linear layer y = w . x
 tests/          Library and end-to-end tests
 docs/           This documentation
@@ -58,14 +61,15 @@ Run the examples:
 
 ```sh
 ./zig-out/bin/fibonacci
+./zig-out/bin/rescue
 ./zig-out/bin/ml_linear
 ```
 
-Both prove a statement, verify it, and reject a forged claim.
+All three prove a statement, verify it, and reject a forged claim.
 
 ## Soundness of the committed protocol
 
-The protocol is described in detail in [`protocol.md`](protocol.md). Two
+The protocol is described in detail in [`protocol.md`](protocol.md). Three
 soundness-relevant properties of this implementation deserve emphasis:
 
 1. **The FRI remainder is a proper code.** The final folded layer is a codeword
@@ -79,6 +83,13 @@ soundness-relevant properties of this implementation deserve emphasis:
    with the revealed trace/quotient values, and the composition must satisfy
    `Hc(x) = Z_H(x) * Q(x)`, catching both wrong boundary claims and tampered
    reveals.
+
+3. **Lookup claims are enforced by cyclic LogUp constraints.** Each lookup
+   relation contributes an accumulator column plus a denominator-cleared
+   transition constraint that holds on *every* row of `H` (no
+   `(x - w^(n-1))` factor), so a multiset mismatch cannot hide behind the
+   exempted last row. The accumulator is committed only after the lookup
+   challenges are sampled, so a malicious prover cannot tailor it to `alpha`.
 
 See [`protocol.md`](protocol.md) for the full transcript order and the exact
 algebraic identities.

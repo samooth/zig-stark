@@ -4,7 +4,7 @@ A STARK (Scalable Transparent Argument of Knowledge) proof system implemented in
 
 ## Status
 
-Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/stark/` handle any AIR implementing the `GenericStark` interface, and ship with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer. 72 tests pass (69 unit + 3 end-to-end) with no leaks.
+Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/stark/` handle any AIR implementing the `GenericStark` interface — including optional preprocessed columns and **LogUp multiset lookups** — and ship with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer. 78 tests pass (75 unit + 3 end-to-end) with no leaks.
 
 ## Documentation
 
