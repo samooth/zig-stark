@@ -101,6 +101,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(ml_example);
 
+    const adder_example = b.addExecutable(.{
+        .name = "binius_adder",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/binius_adder/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
+        }),
+    });
+    b.installArtifact(adder_example);
+
     // Benchmarks
     const bench_ntt = b.addExecutable(.{
         .name = "bench_ntt",
@@ -117,6 +130,22 @@ pub fn build(b: *std.Build) void {
     const run_bench_ntt = b.addRunArtifact(bench_ntt);
     const bench_step = b.step("bench", "Run NTT benchmarks (use -Doptimize=ReleaseFast)");
     bench_step.dependOn(&run_bench_ntt.step);
+
+    const bench_binius = b.addExecutable(.{
+        .name = "bench_binius_stark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/binius_stark/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
+        }),
+    });
+    b.installArtifact(bench_binius);
+    const run_bench_binius = b.addRunArtifact(bench_binius);
+    const bench_binius_step = b.step("bench-binius", "Run Binius STARK benchmarks (use -Doptimize=ReleaseFast)");
+    bench_binius_step.dependOn(&run_bench_binius.step);
 
     // Formatting check
     const fmt_check = b.addFmt(.{ .paths = &.{"."}, .check = true });
