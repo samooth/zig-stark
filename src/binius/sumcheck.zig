@@ -1,0 +1,319 @@
+const std = @import("std");
+const Polynomial = @import("polynomial.zig");
+
+/// Sum-check protocol over a binary field `F` for the claim
+///
+///     H = Σ_{x ∈ {0,1}^k} g(x),    g(x) = ∏_{j=1}^m f_j(x),
+///
+/// where each `f_j` is a multilinear polynomial supplied as its 2^k hypercube
+/// evaluation table. The Fiat-Shamir transcript uses SHA256 and a per-round
+/// challenge `r_i` taken as the last 4 bits of the digest, mirroring the
+/// Bitcoin Script verifier, so a proof produced here can be re-checked on-chain.
+///
+/// Convention: round i folds the *lowest* remaining variable (adjacent table
+/// pairs `(2j, 2j+1)`), which is exactly the ordering used by
+/// `Multilinear.eval`, so the verifier's final MLE-product check reuses it.
+pub fn Sumcheck(comptime F: type) type {
+    return struct {
+        const Self = @This();
+        const Sha256 = std.crypto.hash.sha2.Sha256;
+        const Multilinear = Polynomial.Multilinear(F);
+
+        pub const Proof = struct {
+            claimed_sum: F,
+            /// rounds[i] = m+1 low-first coefficients of the univariate
+            /// polynomial s_i(t) = Σ_{rest} ∏_j f_j^(i)(rest, t).
+            rounds: []const []const F,
+        };
+
+        /// Fiat-Shamir transcript (SHA256, challenge = last 4 bits of digest).
+        const Transcript = struct {
+            buf: [32]u8,
+
+            fn init(claimed: F) Transcript {
+                var b: [F.SIZE]u8 = undefined;
+                claimed.toBytes(&b);
+                var t = Transcript{ .buf = undefined };
+                Sha256.hash(&b, &t.buf, .{});
+                return t;
+            }
+
+            fn absorb(self: *Transcript, coeffs: []const F) F {
+                var hasher = Sha256.init(.{});
+                hasher.update(&self.buf);
+                var b: [F.SIZE]u8 = undefined;
+                for (coeffs) |c| {
+                    c.toBytes(&b);
+                    hasher.update(&b);
+                }
+                hasher.final(&self.buf);
+                if (F.SIZE == 1) {
+                    return F.fromInt(self.buf[31] & 0x0f);
+                }
+                return F.fromBytes(self.buf[32 - F.SIZE ..][0..F.SIZE]);
+            }
+        };
+
+        /// Lagrange interpolation of a univariate polynomial (degree < n) from
+        /// n distinct points; returns low-first coefficients. Characteristic-2
+        /// aware: (t - x_j) becomes (t + x_j).
+        pub fn interpolateCoeffs(
+            allocator: std.mem.Allocator,
+            points: []const F,
+            values: []const F,
+        ) ![]F {
+            std.debug.assert(points.len == values.len);
+            const n = points.len;
+            std.debug.assert(n <= 64);
+
+            const coeffs = try allocator.alloc(F, n);
+            errdefer allocator.free(coeffs);
+            @memset(coeffs, F.zero());
+
+            var basis: [64]F = undefined;
+            for (0..n) |i| {
+                basis[0] = F.one();
+                var deg: usize = 1;
+                var denom = F.one();
+                for (0..n) |j| {
+                    if (j == i) continue;
+                    // basis *= (t + points[j]) using a scratch copy.
+                    var next: [64]F = undefined;
+                    for (0..deg + 1) |d| {
+                        const lo = if (d == 0) F.zero() else basis[d - 1];
+                        const hi = if (d == deg) F.zero() else basis[d];
+                        next[d] = lo.add(points[j].mul(hi));
+                    }
+                    @memcpy(basis[0 .. deg + 1], next[0 .. deg + 1]);
+                    denom = denom.mul(points[i].add(points[j]));
+                    deg += 1;
+                }
+                const scale = denom.inv().mul(values[i]);
+                for (0..deg) |d| {
+                    coeffs[d] = coeffs[d].add(basis[d].mul(scale));
+                }
+            }
+            return coeffs;
+        }
+
+        /// Horner evaluation of a low-first coefficient array.
+        pub fn evalPoly(coeffs: []const F, x: F) F {
+            var acc = F.zero();
+            var i = coeffs.len;
+            while (i > 0) {
+                i -= 1;
+                acc = acc.mul(x).add(coeffs[i]);
+            }
+            return acc;
+        }
+
+        /// Hypercube sum of the product of the tables (the claimed value H).
+        pub fn computeClaimedSum(n: usize, tables: []const []const F) F {
+            var h = F.zero();
+            for (0..n) |idx| {
+                var prod = F.one();
+                for (tables) |t| prod = prod.mul(t[idx]);
+                h = h.add(prod);
+            }
+            return h;
+        }
+
+        /// Off-chain prover. `tables` has m tables of length 2^k.
+        pub fn prove(
+            allocator: std.mem.Allocator,
+            k: usize,
+            tables: []const []const F,
+        ) !Proof {
+            const m = tables.len;
+            const n = @as(usize, 1) << @intCast(k);
+            for (tables) |t| std.debug.assert(t.len == n);
+            std.debug.assert(m + 1 <= 64);
+
+            const h = computeClaimedSum(n, tables);
+            var transcript = Transcript.init(h);
+
+            var cur = try allocator.alloc([]F, m);
+            defer allocator.free(cur);
+            for (0..m) |j| {
+                cur[j] = try allocator.dupe(F, tables[j]);
+            }
+            defer {
+                for (cur) |ct| allocator.free(ct);
+            }
+
+            const rounds = try allocator.alloc([]F, k);
+            errdefer allocator.free(rounds);
+
+            var len = n;
+            var i: usize = 0;
+            while (i < k) : (i += 1) {
+                const half = len / 2;
+
+                // Evaluate s_i at the m+1 points t = 0..m, then interpolate.
+                const points = try allocator.alloc(F, m + 1);
+                defer allocator.free(points);
+                const values = try allocator.alloc(F, m + 1);
+                defer allocator.free(values);
+                for (0..m + 1) |t| {
+                    points[t] = F.fromInt(t);
+                    var s = F.zero();
+                    for (0..half) |rest| {
+                        var prod = F.one();
+                        for (cur) |ct| {
+                            const a = ct[2 * rest];
+                            const b = ct[2 * rest + 1];
+                            prod = prod.mul(a.add(points[t].mul(a.add(b))));
+                        }
+                        s = s.add(prod);
+                    }
+                    values[t] = s;
+                }
+
+                const coeffs = try interpolateCoeffs(allocator, points, values);
+                rounds[i] = coeffs;
+
+                const r_i = transcript.absorb(coeffs);
+                for (cur) |ct| {
+                    for (0..half) |rest| {
+                        const a = ct[2 * rest];
+                        const b = ct[2 * rest + 1];
+                        ct[rest] = a.add(r_i.mul(a.add(b)));
+                    }
+                }
+                len = half;
+            }
+
+            return .{ .claimed_sum = h, .rounds = rounds };
+        }
+
+        /// Verifier: checks the round consistency equations, recomputes the
+        /// challenges from the transcript, and checks the final MLE equality.
+        pub fn verify(
+            allocator: std.mem.Allocator,
+            k: usize,
+            tables: []const []const F,
+            proof: Proof,
+        ) !bool {
+            const m = tables.len;
+            const n = @as(usize, 1) << @intCast(k);
+            for (tables) |t| std.debug.assert(t.len == n);
+            if (proof.rounds.len != k) return false;
+
+            var transcript = Transcript.init(proof.claimed_sum);
+            var current_sum = proof.claimed_sum;
+
+            for (0..k) |i| {
+                const coeffs = proof.rounds[i];
+                if (coeffs.len != m + 1) return false;
+
+                const s0 = evalPoly(coeffs, F.zero());
+                const s1 = evalPoly(coeffs, F.one());
+                if (!s0.add(s1).eq(current_sum)) return false;
+
+                const r_i = transcript.absorb(coeffs);
+                current_sum = evalPoly(coeffs, r_i);
+            }
+
+            var r: [64]F = undefined;
+            var tr = Transcript.init(proof.claimed_sum);
+            for (0..k) |i| {
+                r[i] = tr.absorb(proof.rounds[i]);
+            }
+
+            var prod = F.one();
+            for (tables) |table| {
+                const p = Multilinear{ .evals = table };
+                const ev = try p.eval(allocator, r[0..k]);
+                prod = prod.mul(ev);
+            }
+            return prod.eq(current_sum);
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+const Gf16 = @import("field.zig").Gf16;
+const T = Sumcheck(Gf16);
+
+fn fe(x: u128) Gf16 {
+    return Gf16.fromInt(x);
+}
+
+test "interpolate recovers linear polynomial" {
+    const alloc = std.testing.allocator;
+    // s(t) = 3 + 5t over GF(16)
+    const points = [_]Gf16{ fe(0), fe(1) };
+    const values = [_]Gf16{ fe(3), fe(3).add(fe(5)) };
+    const coeffs = try T.interpolateCoeffs(alloc, &points, &values);
+    defer alloc.free(coeffs);
+    try std.testing.expectEqual(@as(u128, 3), coeffs[0].value);
+    try std.testing.expectEqual(@as(u128, 5), coeffs[1].value);
+    // matches at a third point t = 7
+    const ref = fe(3).add(fe(5).mul(fe(7)));
+    try std.testing.expectEqual(ref.value, T.evalPoly(coeffs, fe(7)).value);
+}
+
+test "interpolate recovers quadratic polynomial" {
+    const alloc = std.testing.allocator;
+    // s(t) = 2 + 3t + 4t^2 over GF(16); note 4*4 = x^4 ≡ x + 1 = 3.
+    const points = [_]Gf16{ fe(0), fe(1), fe(2) };
+    const values = [_]Gf16{ fe(2), fe(2).add(fe(3)).add(fe(4)), fe(2).add(fe(6)).add(fe(3)) };
+    const coeffs = try T.interpolateCoeffs(alloc, &points, &values);
+    defer alloc.free(coeffs);
+    try std.testing.expectEqual(@as(u128, 2), coeffs[0].value);
+    try std.testing.expectEqual(@as(u128, 3), coeffs[1].value);
+    try std.testing.expectEqual(@as(u128, 4), coeffs[2].value);
+}
+
+test "prove/verify round trip, k=1 m=1" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const tables = [_][]const Gf16{&.{ fe(3), fe(7) }};
+    const proof = try T.prove(alloc, 1, &tables);
+    try std.testing.expect(proof.claimed_sum.eq(fe(3).add(fe(7))));
+    try std.testing.expect(try T.verify(alloc, 1, &tables, proof));
+}
+
+test "prove/verify round trip, product of two multilinears k=2" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const t0 = [_]Gf16{ fe(1), fe(2), fe(3), fe(4) };
+    const t1 = [_]Gf16{ fe(5), fe(6), fe(7), fe(8) };
+    const tables = [_][]const Gf16{ &t0, &t1 };
+    const proof = try T.prove(alloc, 2, &tables);
+    try std.testing.expect(try T.verify(alloc, 2, &tables, proof));
+}
+
+test "prove/verify round trip, k=3 m=1" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const t0 = [_]Gf16{ fe(5), fe(2), fe(9), fe(1), fe(3), fe(7), fe(4), fe(6) };
+    const tables = [_][]const Gf16{&t0};
+    const proof = try T.prove(alloc, 3, &tables);
+    try std.testing.expect(try T.verify(alloc, 3, &tables, proof));
+}
+
+test "tampered claimed sum fails verification" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const t0 = [_]Gf16{ fe(1), fe(2), fe(3), fe(4) };
+    const t1 = [_]Gf16{ fe(5), fe(6), fe(7), fe(8) };
+    const tables = [_][]const Gf16{ &t0, &t1 };
+    const proof = try T.prove(alloc, 2, &tables);
+    const bad = T.Proof{ .claimed_sum = proof.claimed_sum.add(fe(1)), .rounds = proof.rounds };
+    try std.testing.expect(!try T.verify(alloc, 2, &tables, bad));
+}
+
+test "claimed sum equals direct hypercube product sum" {
+    const t0 = [_]Gf16{ fe(5), fe(2), fe(9), fe(1), fe(3), fe(7), fe(4), fe(6) };
+    const t1 = [_]Gf16{ fe(0), fe(0), fe(0), fe(0), fe(0), fe(0), fe(0), fe(0) };
+    const tables = [_][]const Gf16{ &t0, &t1 };
+    try std.testing.expectEqual(@as(u128, 0), T.computeClaimedSum(8, &tables).value);
+}
