@@ -26,6 +26,13 @@ pub fn Sumcheck(comptime F: type) type {
             rounds: []const []const F,
         };
 
+        /// One monomial c·∏_{j∈indices} tables[j] of a linear combination;
+        /// `indices` may repeat a table to encode powers.
+        pub const Term = struct {
+            coeff: F,
+            indices: []const usize,
+        };
+
         /// Fiat-Shamir transcript (SHA256, challenge = last 4 bits of digest).
         pub const Transcript = struct {
             buf: [32]u8,
@@ -158,6 +165,102 @@ pub fn Sumcheck(comptime F: type) type {
                 h = h.add(prod);
             }
             return h;
+        }
+
+        /// Hypercube sum of a linear combination of table products:
+        /// Σ_x Σ_t term_t.coeff · ∏_{j∈term_t.indices} tables[j][x].
+        pub fn computeCombinationSum(n: usize, tables: []const []const F, terms: []const Term) F {
+            var h = F.zero();
+            for (0..n) |idx| {
+                for (terms) |tm| {
+                    var prod = tm.coeff;
+                    for (tm.indices) |ti| prod = prod.mul(tables[ti][idx]);
+                    h = h.add(prod);
+                }
+            }
+            return h;
+        }
+
+        /// Prover for a sum-check over a linear combination of table products,
+        ///
+        ///     g(x) = Σ_t coeff_t · ∏_{j∈indices_t} tables[j](x),
+        ///
+        /// with each round interpolated at d+1 points, where
+        /// d = max_t |indices_t| is the per-variable degree bound (every table
+        /// is multilinear, so a product of d tables has degree ≤ d in each
+        /// variable). This is the batching primitive behind the Binius
+        /// zero-check: many constraints combine into a single k-round protocol.
+        pub fn proveCombination(
+            allocator: std.mem.Allocator,
+            k: usize,
+            tables: []const []const F,
+            terms: []const Term,
+            seed: ?[]const u8,
+        ) !Proof {
+            const n = @as(usize, 1) << @intCast(k);
+            for (tables) |t| std.debug.assert(t.len == n);
+            var dmax: usize = 0;
+            for (terms) |tm| dmax = @max(dmax, tm.indices.len);
+            std.debug.assert(dmax + 1 <= 64);
+
+            const h = computeCombinationSum(n, tables, terms);
+            var transcript = if (seed) |s| Transcript.initBytes(s) else Transcript.init(h);
+
+            const m = tables.len;
+            var cur = try allocator.alloc([]F, m);
+            defer allocator.free(cur);
+            for (0..m) |j| {
+                cur[j] = try allocator.dupe(F, tables[j]);
+            }
+            defer {
+                for (cur) |ct| allocator.free(ct);
+            }
+
+            const rounds = try allocator.alloc([]F, k);
+            errdefer allocator.free(rounds);
+
+            var len = n;
+            var i: usize = 0;
+            while (i < k) : (i += 1) {
+                const half = len / 2;
+
+                // Evaluate s_i at the d+1 points t = 0..d, then interpolate.
+                const points = try allocator.alloc(F, dmax + 1);
+                defer allocator.free(points);
+                const values = try allocator.alloc(F, dmax + 1);
+                defer allocator.free(values);
+                for (0..dmax + 1) |t| {
+                    points[t] = F.fromInt(t);
+                    var s = F.zero();
+                    for (0..half) |rest| {
+                        for (terms) |tm| {
+                            var prod = tm.coeff;
+                            for (tm.indices) |ti| {
+                                const a = cur[ti][2 * rest];
+                                const b = cur[ti][2 * rest + 1];
+                                prod = prod.mul(a.add(points[t].mul(a.add(b))));
+                            }
+                            s = s.add(prod);
+                        }
+                    }
+                    values[t] = s;
+                }
+
+                const coeffs = try interpolateCoeffs(allocator, points, values);
+                rounds[i] = coeffs;
+
+                const r_i = transcript.absorb(coeffs);
+                for (cur) |ct| {
+                    for (0..half) |rest| {
+                        const a = ct[2 * rest];
+                        const b = ct[2 * rest + 1];
+                        ct[rest] = a.add(r_i.mul(a.add(b)));
+                    }
+                }
+                len = half;
+            }
+
+            return .{ .claimed_sum = h, .rounds = rounds };
         }
 
         /// Off-chain prover. `tables` has m tables of length 2^k.
@@ -365,4 +468,42 @@ test "claimed sum equals direct hypercube product sum" {
     const t1 = [_]Gf16{ fe(0), fe(0), fe(0), fe(0), fe(0), fe(0), fe(0), fe(0) };
     const tables = [_][]const Gf16{ &t0, &t1 };
     try std.testing.expectEqual(@as(u128, 0), T.computeClaimedSum(8, &tables).value);
+}
+
+test "combination sum-check round trips" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const t0 = [_]Gf16{ fe(1), fe(2), fe(3), fe(4) };
+    const t1 = [_]Gf16{ fe(5), fe(6), fe(7), fe(8) };
+    const t2 = [_]Gf16{ fe(3), fe(1), fe(9), fe(2) };
+    const tables = [_][]const Gf16{ &t0, &t1, &t2 };
+
+    // g(x) = 2·t0(x)·t2(x) + 3·t1(x)
+    const terms = [_]T.Term{
+        .{ .coeff = fe(2), .indices = &.{ 0, 2 } },
+        .{ .coeff = fe(3), .indices = &.{1} },
+    };
+
+    const sp = try T.proveCombination(alloc, 2, &tables, &terms, null);
+    const rr = (try T.runRounds(alloc, null, sp.claimed_sum, sp.rounds)) orelse return error.TestUnexpectedResult;
+    defer alloc.free(rr.challenges);
+
+    // claimed sum equals the direct hypercube combination sum
+    var direct = Gf16.zero();
+    for (0..4) |i| {
+        direct = direct.add(fe(2).mul(t0[i].mul(t2[i]))).add(fe(3).mul(t1[i]));
+    }
+    try std.testing.expect(direct.eq(sp.claimed_sum));
+
+    // final round value equals g at the challenge point
+    const Multilinear = @import("polynomial.zig").Multilinear(Gf16);
+    const p0 = Multilinear{ .evals = &t0 };
+    const p1 = Multilinear{ .evals = &t1 };
+    const p2 = Multilinear{ .evals = &t2 };
+    const v0 = try p0.eval(alloc, rr.challenges);
+    const v1 = try p1.eval(alloc, rr.challenges);
+    const v2 = try p2.eval(alloc, rr.challenges);
+    const expected = fe(2).mul(v0.mul(v2)).add(fe(3).mul(v1));
+    try std.testing.expect(expected.eq(rr.current_sum));
 }
