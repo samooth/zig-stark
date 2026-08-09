@@ -33,7 +33,8 @@ The source tree is split into three modules, re-exported by `src/root.zig`:
 - `m31` — the M31/CM31/QM31 STARK stack: field tower, circle geometry, NTTs,
   AIR abstractions, univariate polynomials, FRI, and the DEEP-FRI STARK.
   Field-element hashing lives here (`src/m31/hash.zig`).
-- `binius` — binary-field (Binius/BSV) stack, currently a placeholder.
+- `binius` — binary-field (Binius/BSV) stack over GF(2^k): zero-check constraints,
+  combined sum-check, Fiat-Shamir binding, and batched MLE evaluation proofs.
 
 ```
 src/
@@ -48,7 +49,7 @@ src/
     hash.zig    M31/CM31/QM31 field-element hashing
     fri.zig     FRI low-degree test (commit, fold, queries)
     stark.zig   DEEP-FRI STARK prover / verifier (incl. LogUp lookups) + test AIRs
-  binius/       Binary-field stack (placeholder)
+  binius/       Binary-field stack (GF(2^k) zero-check sum-check)
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation (degree-5 sbox)

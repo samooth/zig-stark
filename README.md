@@ -26,7 +26,7 @@ src/
     hash.zig    M31/CM31/QM31 field-element hashing
     fri.zig     FRI low-degree test (folding, remainder, queries)
     stark.zig   DEEP-FRI STARK prover / verifier + Fibonacci AIR
-  binius/       Binary-field (Binius/BSV) stack — placeholder
+  binius/       Binary-field (Binius/BSV) stack (GF(2^k) zero-check sum-check)
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation
