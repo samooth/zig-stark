@@ -4,7 +4,7 @@ A STARK (Scalable Transparent Argument of Knowledge) proof system implemented in
 
 ## Status
 
-Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/stark/` handle any AIR implementing the `GenericStark` interface — including optional preprocessed columns and **LogUp multiset lookups** — and ship with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer. 78 tests pass (75 unit + 3 end-to-end) with no leaks.
+Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/m31/stark.zig` handle any AIR implementing the `GenericStark` interface — including optional preprocessed columns and **LogUp multiset lookups** — and ship with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer. 80 tests pass (77 unit + 3 end-to-end) with no leaks.
 
 ## Documentation
 
@@ -16,17 +16,17 @@ Working end-to-end DEEP-FRI STARK. The prover and verifier in `src/stark/` handl
 
 ```
 src/
-  field/        M31, CM31, QM31 field arithmetic + SIMD helpers
-  circle/       Circle point group, domains, cosets
-  ntt/          Classic NTT, SIMD butterflies, circle FFT (recursive fold)
-  air/          AIR abstractions: frames, constraints, execution trace
-  poly/         Univariate polynomial helpers
-  hash/         Blake3 hash + field-element hashing
-  merkle/       Merkle tree commit / open / verify
-  channel/      Fiat-Shamir transcript
-  fri/          FRI low-degree test (folding, remainder, queries)
-  stark/        DEEP-FRI STARK prover / verifier + Fibonacci AIR
-  utils/        Bit manipulation and SIMD utilities
+  core/         Field-agnostic primitives: hash (Blake3), merkle, channel, simd
+  m31/          M31 STARK stack: field tower, circle, ntt, air, poly, fri, stark
+    field/      M31, CM31, QM31 field arithmetic + SIMD helpers
+    circle/     Circle point group, domains, cosets
+    ntt/        Classic NTT, SIMD butterflies, circle FFT (recursive fold)
+    air/        AIR abstractions: frames, constraints, execution trace
+    poly/       Univariate polynomial helpers
+    hash.zig    M31/CM31/QM31 field-element hashing
+    fri.zig     FRI low-degree test (folding, remainder, queries)
+    stark.zig   DEEP-FRI STARK prover / verifier + Fibonacci AIR
+  binius/       Binary-field (Binius/BSV) stack — placeholder
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation
@@ -34,6 +34,8 @@ examples/
 tests/          End-to-end tests
 benchmarks/     NTT / circle-FFT benchmarks (zig build bench)
 ```
+
+Modules are exported via `src/root.zig` (`core`, `m31`, `binius` namespaces), so library consumers can depend on the field-agnostic primitives without pulling in the M31 tower.
 
 ## Building
 

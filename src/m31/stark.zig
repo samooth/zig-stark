@@ -1,12 +1,13 @@
 const std = @import("std");
-const QM31 = @import("../field/qm31.zig").QM31;
-const M31 = @import("../field/m31.zig").M31;
-const Hash = @import("../hash/hash.zig").Hash;
-const Channel = @import("../channel/channel.zig").Channel;
-const MerkleTree = @import("../merkle/merkle.zig").MerkleTree;
-const merkleVerify = @import("../merkle/merkle.zig").verify;
-const UnivariateQM31 = @import("../poly/univariate.zig").UnivariateQM31;
-const Fri = @import("../fri/fri.zig");
+const QM31 = @import("field/qm31.zig").QM31;
+const M31 = @import("field/m31.zig").M31;
+const Hash = @import("../core/hash/hash.zig").Hash;
+const FieldHash = @import("hash.zig");
+const Channel = @import("../core/channel/channel.zig").Channel;
+const MerkleTree = @import("../core/merkle/merkle.zig").MerkleTree;
+const merkleVerify = @import("../core/merkle/merkle.zig").verify;
+const UnivariateQM31 = @import("poly/univariate.zig").UnivariateQM31;
+const Fri = @import("fri.zig");
 
 pub const BoundaryAssertion = struct {
     column: usize,
@@ -415,10 +416,10 @@ pub fn GenericStark(comptime Air: type) type {
             // Sample the lookup challenges after the preprocessed + trace roots.
             const alpha_cols = try allocator.alloc(F, n_lookup_cols);
             defer allocator.free(alpha_cols);
-            for (alpha_cols) |*a| a.* = channel.sampleQM31();
+            for (alpha_cols) |*a| a.* = channel.sample(QM31);
             const alpha_rels = try allocator.alloc(F, n_rel);
             defer allocator.free(alpha_rels);
-            for (alpha_rels) |*a| a.* = channel.sampleQM31();
+            for (alpha_rels) |*a| a.* = channel.sample(QM31);
 
             // Fill the accumulator columns on H: acc[0] = 0 and
             //   acc[i+1] = acc[i] + sel*m/(alpha-key) - (1-sel)/(alpha-tkey).
@@ -468,7 +469,7 @@ pub fn GenericStark(comptime Air: type) type {
             // Sample transition and boundary weights.
             const alphas = try allocator.alloc(F, n_trans_total);
             defer allocator.free(alphas);
-            for (alphas) |*a| a.* = channel.sampleQM31();
+            for (alphas) |*a| a.* = channel.sample(QM31);
             const boundary = try allocator.alloc(BoundaryAssertion, total_bound);
             defer allocator.free(boundary);
             Air.boundaryAssertions(public_inputs, n, boundary[0..num_bound]);
@@ -477,7 +478,7 @@ pub fn GenericStark(comptime Air: type) type {
             }
             const betas = try allocator.alloc(F, total_bound);
             defer allocator.free(betas);
-            for (betas) |*b| b.* = channel.sampleQM31();
+            for (betas) |*b| b.* = channel.sample(QM31);
 
             // Z_H and the quotient Q = Hc / Z_H on D.
             const q_codeword = try allocator.alloc(F, N);
@@ -543,7 +544,7 @@ pub fn GenericStark(comptime Air: type) type {
             channel.absorbDigest(quotient_root);
 
             // Sample z and compute the DEEP evaluations.
-            const z = channel.sampleQM31();
+            const z = channel.sample(QM31);
             const wz = z.mul(w);
             const deep_evals = try allocator.alloc(F, n_deep);
             errdefer allocator.free(deep_evals);
@@ -566,11 +567,11 @@ pub fn GenericStark(comptime Air: type) type {
                 alpha_cols,
                 alpha_rels,
             );
-            channel.absorbQM31s(deep_evals);
+            channel.absorbMany(deep_evals);
 
             const gammas = try allocator.alloc(F, n_deep);
             defer allocator.free(gammas);
-            for (gammas) |*g| g.* = channel.sampleQM31();
+            for (gammas) |*g| g.* = channel.sample(QM31);
 
             // DEEP combined polynomial codeword on D.
             const g_codeword = try allocator.alloc(F, N);
@@ -679,15 +680,15 @@ pub fn GenericStark(comptime Air: type) type {
             for (0..m) |j| channel.absorbDigest(proof.trace_roots[j]);
             const alpha_cols = try allocator.alloc(F, n_lookup_cols);
             defer allocator.free(alpha_cols);
-            for (alpha_cols) |*a| a.* = channel.sampleQM31();
+            for (alpha_cols) |*a| a.* = channel.sample(QM31);
             const alpha_rels = try allocator.alloc(F, n_rel);
             defer allocator.free(alpha_rels);
-            for (alpha_rels) |*a| a.* = channel.sampleQM31();
+            for (alpha_rels) |*a| a.* = channel.sample(QM31);
             for (0..n_rel) |r| channel.absorbDigest(proof.accumulator_roots.?[r]);
 
             const alphas = try allocator.alloc(F, n_trans_total);
             defer allocator.free(alphas);
-            for (alphas) |*a| a.* = channel.sampleQM31();
+            for (alphas) |*a| a.* = channel.sample(QM31);
             const boundary = try allocator.alloc(BoundaryAssertion, total_bound);
             defer allocator.free(boundary);
             Air.boundaryAssertions(public_inputs, n, boundary[0..num_bound]);
@@ -696,14 +697,14 @@ pub fn GenericStark(comptime Air: type) type {
             }
             const betas = try allocator.alloc(F, total_bound);
             defer allocator.free(betas);
-            for (betas) |*b| b.* = channel.sampleQM31();
+            for (betas) |*b| b.* = channel.sample(QM31);
 
             channel.absorbDigest(proof.quotient_root);
-            const z = channel.sampleQM31();
-            channel.absorbQM31s(proof.deep_evals);
+            const z = channel.sample(QM31);
+            channel.absorbMany(proof.deep_evals);
             const gammas = try allocator.alloc(F, n_deep);
             defer allocator.free(gammas);
-            for (gammas) |*g| g.* = channel.sampleQM31();
+            for (gammas) |*g| g.* = channel.sample(QM31);
 
             // FRI verification (also samples FRI alphas / remainder / queries).
             if (!try Fri.verify(allocator, Self.friParams(params), &proof.fri, channel)) return false;
@@ -718,16 +719,16 @@ pub fn GenericStark(comptime Air: type) type {
                 // Merkle checks for trace + accumulator (at p0 and pn), quotient
                 // and preprocessed (at p0) reveals.
                 for (0..m) |j| {
-                    if (!merkleVerify(proof.trace_roots[j], p0, Hash.hashQM31(qv.values[j]), qv.paths[j])) return false;
-                    if (!merkleVerify(proof.trace_roots[j], pn, Hash.hashQM31(qv.values[m_total + j]), qv.paths[m_total + j])) return false;
+                    if (!merkleVerify(proof.trace_roots[j], p0, FieldHash.hashQM31(qv.values[j]), qv.paths[j])) return false;
+                    if (!merkleVerify(proof.trace_roots[j], pn, FieldHash.hashQM31(qv.values[m_total + j]), qv.paths[m_total + j])) return false;
                 }
                 for (0..n_rel) |r| {
-                    if (!merkleVerify(proof.accumulator_roots.?[r], p0, Hash.hashQM31(qv.values[m + r]), qv.paths[m + r])) return false;
-                    if (!merkleVerify(proof.accumulator_roots.?[r], pn, Hash.hashQM31(qv.values[m_total + m + r]), qv.paths[m_total + m + r])) return false;
+                    if (!merkleVerify(proof.accumulator_roots.?[r], p0, FieldHash.hashQM31(qv.values[m + r]), qv.paths[m + r])) return false;
+                    if (!merkleVerify(proof.accumulator_roots.?[r], pn, FieldHash.hashQM31(qv.values[m_total + m + r]), qv.paths[m_total + m + r])) return false;
                 }
-                if (!merkleVerify(proof.quotient_root, p0, Hash.hashQM31(qv.values[2 * m_total]), qv.paths[2 * m_total])) return false;
+                if (!merkleVerify(proof.quotient_root, p0, FieldHash.hashQM31(qv.values[2 * m_total]), qv.paths[2 * m_total])) return false;
                 for (0..n_pre) |k| {
-                    if (!merkleVerify(proof.preprocessed_roots.?[k], p0, Hash.hashQM31(qv.values[2 * m_total + 1 + k]), qv.paths[2 * m_total + 1 + k])) return false;
+                    if (!merkleVerify(proof.preprocessed_roots.?[k], p0, FieldHash.hashQM31(qv.values[2 * m_total + 1 + k]), qv.paths[2 * m_total + 1 + k])) return false;
                 }
 
                 const x0 = Fri.FRI_OFFSET.mul(w_ev.pow(@as(u64, @intCast(p0))));
@@ -784,7 +785,7 @@ pub fn GenericStark(comptime Air: type) type {
 
         fn hashCodeword(allocator: std.mem.Allocator, codeword: []const F) ![]Hash.Digest {
             const leaves = try allocator.alloc(Hash.Digest, codeword.len);
-            for (codeword, 0..) |v, i| leaves[i] = Hash.hashQM31(v);
+            for (codeword, 0..) |v, i| leaves[i] = FieldHash.hashQM31(v);
             return leaves;
         }
 

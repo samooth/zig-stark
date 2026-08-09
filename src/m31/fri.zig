@@ -1,12 +1,13 @@
 const std = @import("std");
-const QM31 = @import("../field/qm31.zig").QM31;
-const M31 = @import("../field/m31.zig").M31;
-const CM31 = @import("../field/cm31.zig").CM31;
-const Hash = @import("../hash/hash.zig").Hash;
-const Channel = @import("../channel/channel.zig").Channel;
-const MerkleTree = @import("../merkle/merkle.zig").MerkleTree;
-const merkleVerify = @import("../merkle/merkle.zig").verify;
-const UnivariateQM31 = @import("../poly/univariate.zig").UnivariateQM31;
+const QM31 = @import("field/qm31.zig").QM31;
+const M31 = @import("field/m31.zig").M31;
+const CM31 = @import("field/cm31.zig").CM31;
+const Hash = @import("../core/hash/hash.zig").Hash;
+const FieldHash = @import("hash.zig");
+const Channel = @import("../core/channel/channel.zig").Channel;
+const MerkleTree = @import("../core/merkle/merkle.zig").MerkleTree;
+const merkleVerify = @import("../core/merkle/merkle.zig").verify;
+const UnivariateQM31 = @import("poly/univariate.zig").UnivariateQM31;
 
 /// FRI (Fast Reed-Solomon Interactive Oracle Proof) over QM31.
 ///
@@ -197,14 +198,14 @@ pub fn proveCodeword(
         const nnext = ni / 2;
         const leaves = try allocator.alloc(Hash.Digest, ni);
         errdefer allocator.free(leaves);
-        for (layers[i], 0..) |v, j| leaves[j] = Hash.hashQM31(v);
+        for (layers[i], 0..) |v, j| leaves[j] = FieldHash.hashQM31(v);
         trees[i] = try MerkleTree.init(allocator, leaves);
         allocator.free(leaves);
         roots[i] = trees[i].root();
         channel.absorbDigest(roots[i]);
 
         // Sample the fold challenge and build the next layer.
-        const alpha = channel.sampleQM31();
+        const alpha = channel.sample(QM31);
         const ev_next = try allocator.alloc(QM31, nnext);
         errdefer allocator.free(ev_next);
         const dom_i = layer_doms[i];
@@ -229,7 +230,7 @@ pub fn proveCodeword(
     const remainder = try allocator.alloc(QM31, rem_coeffs);
     errdefer allocator.free(remainder);
     try UnivariateQM31.interpolate(allocator, layer_doms[L][0..rem_coeffs], layers[L][0..rem_coeffs], remainder);
-    channel.absorbQM31s(remainder);
+    channel.absorbMany(remainder);
 
     // Query indices (sampled after all commitments are absorbed).
     const queries = try allocator.alloc(Query, params.num_queries);
@@ -291,9 +292,9 @@ pub fn verify(
     defer allocator.free(alphas);
     for (0..L) |i| {
         channel.absorbDigest(proof.roots[i]);
-        alphas[i] = channel.sampleQM31();
+        alphas[i] = channel.sample(QM31);
     }
-    channel.absorbQM31s(proof.remainder);
+    channel.absorbMany(proof.remainder);
 
     for (proof.queries) |q| {
         // Check the resampled index matches.
@@ -308,8 +309,8 @@ pub fn verify(
             const pair = q.pairs[i];
 
             // Values must hash to the leaves committed under root_i.
-            if (!merkleVerify(proof.roots[i], pn, Hash.hashQM31(pair.value0), pair.path0)) return false;
-            if (!merkleVerify(proof.roots[i], pn + nnext, Hash.hashQM31(pair.value1), pair.path1)) return false;
+            if (!merkleVerify(proof.roots[i], pn, FieldHash.hashQM31(pair.value0), pair.path0)) return false;
+            if (!merkleVerify(proof.roots[i], pn + nnext, FieldHash.hashQM31(pair.value1), pair.path1)) return false;
 
             // The previous fold produced the value at position p in this layer;
             // p is always one of the two revealed positions.

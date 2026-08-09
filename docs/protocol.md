@@ -1,7 +1,7 @@
 # The DEEP-FRI STARK protocol
 
 This document describes the exact protocol implemented in
-`src/stark/stark.zig` and `src/fri/fri.zig`. It is written for readers who want
+`src/m31/stark.zig` and `src/m31/fri.zig`. It is written for readers who want
 to verify that the implementation matches a correct DEEP-FRI STARK, and to make
 the (occasionally subtle) algebraic identities precise.
 
@@ -220,7 +220,7 @@ The verifier checks, for each query:
 
 ## FRI
 
-`src/fri/fri.zig` implements FRI over `F = QM31`.
+`src/m31/fri.zig` implements FRI over `F = QM31`.
 
 **Domains.** Layer `i` uses `D_i = offset^(2^i) * <w_i>` with
 `w_i = primitiveRootOfUnity(dlog - i)`, so `D_{i+1}[j] = (D_i[j])^2`.

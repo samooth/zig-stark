@@ -1,13 +1,13 @@
 # LESSON_STARK.md
 
 Session notes on the STARK/circle-FFT mathematics, gathered while replacing the
-naive circle FFT with stwo's O(n log n) recursive-fold algorithm in `src/ntt/circle.zig`.
+naive circle FFT with stwo's O(n log n) recursive-fold algorithm in `src/m31/ntt/circle.zig`.
 
 ## Why the circle group is needed over M31
 
 - Standard radix-2 NTTs need primitive 2^k-th roots of unity in the field.
   F_(2^31 - 1) has multiplicative group order p - 1 = 2 * 1073741823, i.e.
-  2-adicity 1: only sizes 1 and 2 are possible (see `src/ntt/classic.zig`).
+  2-adicity 1: only sizes 1 and 2 are possible (see `src/m31/ntt/classic.zig`).
 - The circle group C = { (x, y) : x^2 + y^2 = 1 } over M31 has order 2^31, giving
   full 2-power structure. This is the STARK-friendly substitute for roots of
   unity — the "circle FFT" is to M31 what an NTT is to a 2-adic field.

@@ -26,19 +26,29 @@ itself has 2-adicity 1 and is therefore only used for native arithmetic.
 
 ## Module layout
 
+The source tree is split into three modules, re-exported by `src/root.zig`:
+
+- `core` — field-agnostic primitives: Blake3 hashing, Merkle trees, the
+  Fiat-Shamir transcript channel, SIMD/bit utilities.
+- `m31` — the M31/CM31/QM31 STARK stack: field tower, circle geometry, NTTs,
+  AIR abstractions, univariate polynomials, FRI, and the DEEP-FRI STARK.
+  Field-element hashing lives here (`src/m31/hash.zig`).
+- `binius` — binary-field (Binius/BSV) stack, currently a placeholder.
+
 ```
 src/
-  field/        M31, CM31, QM31 arithmetic (+ SIMD helpers)
-  circle/       Circle point group, domains, cosets
-  ntt/          Classic NTT, SIMD butterflies, naive circle FFT
-  air/          AIR abstractions: frames, constraints, execution trace
-  poly/         Univariate polynomials: eval, add/mul, interpolation, vanishing poly
-  hash/         Blake3 wrapper + field-element hashing
-  merkle/       Merkle tree commit / open / verify
-  channel/      Fiat-Shamir transcript (absorb / sample)
-  fri/          FRI low-degree test (commit, fold, queries)
-  stark/        DEEP-FRI STARK prover / verifier (incl. LogUp lookups) + test AIRs
-  utils/        Bit manipulation and SIMD utilities
+  root.zig      Module namespaces (core, m31, binius)
+  core/         Field-agnostic: hash, merkle, channel, bit_utils, simd
+  m31/
+    field/      M31, CM31, QM31 arithmetic (+ SIMD helpers)
+    circle/     Circle point group, domains, cosets
+    ntt/        Classic NTT, SIMD butterflies, circle FFT (recursive fold)
+    air/        AIR abstractions: frames, constraints, execution trace
+    poly/       Univariate polynomials: eval, add/mul, interpolation, vanishing poly
+    hash.zig    M31/CM31/QM31 field-element hashing
+    fri.zig     FRI low-degree test (commit, fold, queries)
+    stark.zig   DEEP-FRI STARK prover / verifier (incl. LogUp lookups) + test AIRs
+  binius/       Binary-field stack (placeholder)
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation (degree-5 sbox)
@@ -54,7 +64,7 @@ Requires Zig 0.16.x.
 ```sh
 zig build            # builds the three example executables
 zig build test       # runs the library unit tests and e2e tests
-zig test src/lib.zig # equivalent unit-test entry point
+zig test src/root.zig # equivalent unit-test entry point
 ```
 
 Run the examples:

@@ -1,11 +1,13 @@
 const std = @import("std");
-const M31 = @import("../field/m31.zig").M31;
-const QM31 = @import("../field/qm31.zig").QM31;
 const Hash = @import("../hash/hash.zig").Hash;
 
 /// Fiat-Shamir transcript. Both prover and verifier absorb the same messages
 /// in the same order; challenges are derived deterministically from the
 /// transcript state, so no randomness needs to be communicated.
+///
+/// The channel is field-agnostic: field elements are absorbed/sampled through
+/// their `toBytes`/`fromBytes`/`SIZE` interface (see `absorb`, `absorbMany`,
+/// `sample`).
 pub const Channel = struct {
     const Blake3 = std.crypto.hash.Blake3;
 
@@ -26,32 +28,18 @@ pub const Channel = struct {
         self.hasher.update(&digest);
     }
 
-    pub fn absorbM31(self: *Channel, v: M31) void {
-        var buf: [M31.SIZE]u8 = undefined;
-        v.toBytes(&buf);
+    /// Absorb a single serializable element (any type exposing
+    /// `SIZE`, `toBytes`, `fromBytes`).
+    pub fn absorb(self: *Channel, value: anytype) void {
+        const T = @TypeOf(value);
+        var buf: [T.SIZE]u8 = undefined;
+        value.toBytes(&buf);
         self.hasher.update(&buf);
     }
 
-    pub fn absorbM31s(self: *Channel, values: []const M31) void {
-        var buf: [M31.SIZE]u8 = undefined;
-        for (values) |v| {
-            v.toBytes(&buf);
-            self.hasher.update(&buf);
-        }
-    }
-
-    pub fn absorbQM31(self: *Channel, v: QM31) void {
-        var buf: [QM31.SIZE]u8 = undefined;
-        v.toBytes(&buf);
-        self.hasher.update(&buf);
-    }
-
-    pub fn absorbQM31s(self: *Channel, values: []const QM31) void {
-        var buf: [QM31.SIZE]u8 = undefined;
-        for (values) |v| {
-            v.toBytes(&buf);
-            self.hasher.update(&buf);
-        }
+    /// Absorb a slice of serializable elements.
+    pub fn absorbMany(self: *Channel, values: anytype) void {
+        for (values) |v| self.absorb(v);
     }
 
     fn sampleBytes(self: *Channel, out: []u8) void {
@@ -76,18 +64,11 @@ pub const Channel = struct {
         }
     }
 
-    /// Sample a random M31 field element.
-    pub fn sampleM31(self: *Channel) M31 {
-        var buf: [M31.SIZE]u8 = undefined;
+    /// Sample a random element of a serializable field type `T`.
+    pub fn sample(self: *Channel, comptime T: type) T {
+        var buf: [T.SIZE]u8 = undefined;
         self.sampleBytes(&buf);
-        return M31.fromBytes(buf);
-    }
-
-    /// Sample a random QM31 field element.
-    pub fn sampleQM31(self: *Channel) QM31 {
-        var buf: [QM31.SIZE]u8 = undefined;
-        self.sampleBytes(&buf);
-        return QM31.fromBytes(buf);
+        return T.fromBytes(buf);
     }
 
     /// Sample a random index in [0, n).
@@ -120,21 +101,24 @@ pub const Channel = struct {
 // Tests
 // ---------------------------------------------------------------------------
 
+const M31 = @import("../../m31/field/m31.zig").M31;
+const QM31 = @import("../../m31/field/qm31.zig").QM31;
+
 test "channel sampling is deterministic for same transcript" {
     var c1 = Channel.init("test");
     var c2 = Channel.init("test");
-    c1.absorbM31(M31.fromInt(7));
-    c2.absorbM31(M31.fromInt(7));
-    try std.testing.expect(c1.sampleM31().eq(c2.sampleM31()));
+    c1.absorb(M31.fromInt(7));
+    c2.absorb(M31.fromInt(7));
+    try std.testing.expect(c1.sample(M31).eq(c2.sample(M31)));
 }
 
 test "channel sampling differs across transcripts" {
     var c1 = Channel.init("test");
     var c2 = Channel.init("test");
-    c1.absorbM31(M31.fromInt(7));
-    c2.absorbM31(M31.fromInt(8));
+    c1.absorb(M31.fromInt(7));
+    c2.absorb(M31.fromInt(8));
     // extremely unlikely to collide
-    try std.testing.expect(!c1.sampleM31().eq(c2.sampleM31()));
+    try std.testing.expect(!c1.sample(M31).eq(c2.sample(M31)));
 }
 
 test "channel sampleIndex is in range" {
@@ -163,4 +147,14 @@ test "channel sampleIndex covers range roughly uniformly" {
         // 4000/8 = 500 expected; allow wide margin
         try std.testing.expect(cnt > 200 and cnt < 800);
     }
+}
+
+test "channel generic sample QM31" {
+    var c = Channel.init("qm31");
+    const v = c.sample(QM31);
+    // 16-byte element must reduce to a valid QM31 (serialization round-trips)
+    var buf: [QM31.SIZE]u8 = undefined;
+    v.toBytes(&buf);
+    const back = QM31.fromBytes(buf);
+    try std.testing.expect(back.eq(v));
 }

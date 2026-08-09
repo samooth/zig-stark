@@ -198,7 +198,7 @@ in the columns — this is the motivating example for the AIR-level
 `maxConstraintDegree(n)`: as polynomials in the evaluation point `x` the
 constraints have degree `5 * (n - 1)`, which is far above the `n - 1` degree of
 the trace columns, and the FRI commitment for the DEEP combination must be sized
-accordingly (see `src/stark/stark.zig`).
+accordingly (see `src/m31/stark.zig`).
 
 The round constants depend on the row, so they are interpolated over the trace
 subgroup `H` and evaluated through `x` inside `evalTransition`. Only the forward

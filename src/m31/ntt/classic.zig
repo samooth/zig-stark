@@ -1,6 +1,6 @@
 const std = @import("std");
 const M31 = @import("../field/m31.zig").M31;
-const bit_utils = @import("../utils/bit_utils.zig");
+const bit_utils = @import("../../core/bit_utils.zig");
 
 /// Classic radix-2 Cooley-Tukey NTT over M31.
 ///

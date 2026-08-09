@@ -4,11 +4,36 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Main library
-    const lib = b.addModule("zig-stark", .{
-        .root_source_file = b.path("src/lib.zig"),
+    // Modules: core (field-agnostic crypto primitives), m31 (Mersenne STARK
+    // stack), binius (binary-field / BSV sumcheck stack), and the root module
+    // `zig-stark` which re-exports the public surface.
+    const core_mod = b.addModule("core", .{
+        .root_source_file = b.path("src/core/lib.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    const m31_mod = b.addModule("m31", .{
+        .root_source_file = b.path("src/m31/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const binius_mod = b.addModule("binius", .{
+        .root_source_file = b.path("src/binius/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const lib = b.addModule("zig-stark", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_mod },
+            .{ .name = "m31", .module = m31_mod },
+            .{ .name = "binius", .module = binius_mod },
+        },
     });
 
     // Tests

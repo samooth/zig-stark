@@ -12,9 +12,9 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
 - Build API: modules are declared with `b.addModule`; per-artifact modules with
   `b.createModule(.{ .root_source_file = ..., .target, .optimize, .imports })`.
   Executables/tests use `b.addExecutable` / `b.addTest` + `b.addRunArtifact`.
-- A shared `lib` module (`src/lib.zig`) is imported by tests, examples and
+- A shared `lib` module (`src/root.zig`) is imported by tests, examples and
   benchmarks via `.imports = &.{ .{ .name = "zig-stark", .module = lib } }`.
-  Top-level `pub const` re-exports in `lib.zig` are the import surface.
+  Top-level `pub const` re-exports in `root.zig` are the import surface.
 - Formatting is wired as a *check* step: `b.addFmt(.{ .paths = &.{"."}, .check = true })`
   under a `fmt` step. Run locally with `zig build fmt`. The author's convention:
   `zig fmt` on edited files, then `zig build fmt` + `zig build test` before commit.
