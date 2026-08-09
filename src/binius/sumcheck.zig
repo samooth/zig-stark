@@ -58,7 +58,9 @@ pub fn Sumcheck(comptime F: type) type {
                 if (F.SIZE == 1) {
                     return F.fromInt(self.buf[31] & 0x0f);
                 }
-                return F.fromBytes(self.buf[32 - F.SIZE ..][0..F.SIZE]);
+                var out: [F.SIZE]u8 = undefined;
+                @memcpy(&out, self.buf[32 - F.SIZE ..][0..F.SIZE]);
+                return F.fromBytes(out);
             }
         };
 

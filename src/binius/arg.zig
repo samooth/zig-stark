@@ -151,7 +151,7 @@ test "binius arg round trip for m=1 and m=2, k=1..3" {
 
         // m=1: sum of a single committed column
         {
-            const tables = [_][]const Gf16{ t0[0..n] };
+            const tables = [_][]const Gf16{t0[0..n]};
             const expected = SumcheckMod.Sumcheck(Gf16).computeClaimedSum(n, &tables);
             const proof = try A.prove(alloc, k, &tables);
 
