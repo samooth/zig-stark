@@ -27,10 +27,10 @@ pub fn Sumcheck(comptime F: type) type {
         };
 
         /// Fiat-Shamir transcript (SHA256, challenge = last 4 bits of digest).
-        const Transcript = struct {
+        pub const Transcript = struct {
             buf: [32]u8,
 
-            fn init(claimed: F) Transcript {
+            pub fn init(claimed: F) Transcript {
                 var b: [F.SIZE]u8 = undefined;
                 claimed.toBytes(&b);
                 var t = Transcript{ .buf = undefined };
@@ -38,7 +38,15 @@ pub fn Sumcheck(comptime F: type) type {
                 return t;
             }
 
-            fn absorb(self: *Transcript, coeffs: []const F) F {
+            /// Seed the transcript from arbitrary bytes (used by the multilinear
+            /// PCS to bind a Merkle root before deriving challenges).
+            pub fn initBytes(seed: []const u8) Transcript {
+                var t = Transcript{ .buf = undefined };
+                Sha256.hash(seed, &t.buf, .{});
+                return t;
+            }
+
+            pub fn absorb(self: *Transcript, coeffs: []const F) F {
                 var hasher = Sha256.init(.{});
                 hasher.update(&self.buf);
                 var b: [F.SIZE]u8 = undefined;
@@ -53,6 +61,38 @@ pub fn Sumcheck(comptime F: type) type {
                 return F.fromBytes(self.buf[32 - F.SIZE ..][0..F.SIZE]);
             }
         };
+
+        /// Result of running the round-consistency checks: the recomputed
+        /// per-round challenges and the final running sum (the claimed MLE
+        /// product value at the challenge point).
+        pub const RoundResult = struct {
+            challenges: []F,
+            current_sum: F,
+        };
+
+        /// Replay the round checks `s_i(0) + s_i(1) == sum_i` and derive the
+        /// challenges. Returns null if any round check fails. The caller must
+        /// free `challenges`.
+        pub fn runRounds(
+            allocator: std.mem.Allocator,
+            seed: ?[]const u8,
+            claimed: F,
+            rounds: []const []const F,
+        ) !?RoundResult {
+            var transcript = if (seed) |s| Transcript.initBytes(s) else Transcript.init(claimed);
+            const challenges = try allocator.alloc(F, rounds.len);
+            errdefer allocator.free(challenges);
+            var current_sum = claimed;
+            for (rounds, 0..) |coeffs, i| {
+                const s0 = evalPoly(coeffs, F.zero());
+                const s1 = evalPoly(coeffs, F.one());
+                if (!s0.add(s1).eq(current_sum)) return null;
+                const r_i = transcript.absorb(coeffs);
+                challenges[i] = r_i;
+                current_sum = evalPoly(coeffs, r_i);
+            }
+            return .{ .challenges = challenges, .current_sum = current_sum };
+        }
 
         /// Lagrange interpolation of a univariate polynomial (degree < n) from
         /// n distinct points; returns low-first coefficients. Characteristic-2
@@ -124,13 +164,24 @@ pub fn Sumcheck(comptime F: type) type {
             k: usize,
             tables: []const []const F,
         ) !Proof {
+            return proveSeeded(allocator, k, tables, null);
+        }
+
+        /// Prover with an optional transcript seed (the PCS binds a Merkle root
+        /// before the challenges are derived).
+        pub fn proveSeeded(
+            allocator: std.mem.Allocator,
+            k: usize,
+            tables: []const []const F,
+            seed: ?[]const u8,
+        ) !Proof {
             const m = tables.len;
             const n = @as(usize, 1) << @intCast(k);
             for (tables) |t| std.debug.assert(t.len == n);
             std.debug.assert(m + 1 <= 64);
 
             const h = computeClaimedSum(n, tables);
-            var transcript = Transcript.init(h);
+            var transcript = if (seed) |s| Transcript.initBytes(s) else Transcript.init(h);
 
             var cur = try allocator.alloc([]F, m);
             defer allocator.free(cur);
@@ -194,39 +245,35 @@ pub fn Sumcheck(comptime F: type) type {
             tables: []const []const F,
             proof: Proof,
         ) !bool {
+            return verifySeeded(allocator, k, tables, proof, null);
+        }
+
+        /// Verifier with an optional transcript seed, matching `proveSeeded`.
+        pub fn verifySeeded(
+            allocator: std.mem.Allocator,
+            k: usize,
+            tables: []const []const F,
+            proof: Proof,
+            seed: ?[]const u8,
+        ) !bool {
             const m = tables.len;
             const n = @as(usize, 1) << @intCast(k);
             for (tables) |t| std.debug.assert(t.len == n);
             if (proof.rounds.len != k) return false;
-
-            var transcript = Transcript.init(proof.claimed_sum);
-            var current_sum = proof.claimed_sum;
-
-            for (0..k) |i| {
-                const coeffs = proof.rounds[i];
+            for (proof.rounds) |coeffs| {
                 if (coeffs.len != m + 1) return false;
-
-                const s0 = evalPoly(coeffs, F.zero());
-                const s1 = evalPoly(coeffs, F.one());
-                if (!s0.add(s1).eq(current_sum)) return false;
-
-                const r_i = transcript.absorb(coeffs);
-                current_sum = evalPoly(coeffs, r_i);
             }
 
-            var r: [64]F = undefined;
-            var tr = Transcript.init(proof.claimed_sum);
-            for (0..k) |i| {
-                r[i] = tr.absorb(proof.rounds[i]);
-            }
+            const rr = (try runRounds(allocator, seed, proof.claimed_sum, proof.rounds)) orelse return false;
+            defer allocator.free(rr.challenges);
 
             var prod = F.one();
             for (tables) |table| {
                 const p = Multilinear{ .evals = table };
-                const ev = try p.eval(allocator, r[0..k]);
+                const ev = try p.eval(allocator, rr.challenges);
                 prod = prod.mul(ev);
             }
-            return prod.eq(current_sum);
+            return prod.eq(rr.current_sum);
         }
     };
 }
