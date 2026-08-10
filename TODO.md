@@ -4,7 +4,7 @@ Current status: zero-check STARK over the tower field with a pluggable
 committed-MLE PCS (`BiniusStarkWith`): the O(2^k) `CommittedMlePcs`, the
 sub-linear `PackedPcs`, and the sub-linear polylog FRI-Binius PCS
 (`fripcs.zig`, FRI-fold in lockstep with the eval sum-check). Extension-field
-`(F, E)` soundness mode, boundary pins, and a batched 4-bit adder gadget. 184 tests.
+`(F, E)` soundness mode, boundary pins, and a batched 4-bit adder gadget. 188 tests.
 
 ## 1. Sub-linear MLE evaluation / commitment (HIGH, DONE — polylog route landed)
 
@@ -57,11 +57,17 @@ Notes:
   7184 units). Runtime note: extension-mode (Gf2_128) prove at k ≥ 5 is
   minutes in Debug — keep size tests single-field.
 
-## 2. Generalize `BiniusArg(F, max_tables)` to `(F, E)` (MEDIUM)
+## 2. Generalize `BiniusArg(F, max_tables)` to `(F, E)` — DONE
 
-`arg.zig` still hard-codes `CommittedMlePcs(F, F)`; make it match
-`BiniusStark(F, E, ...)` so the product-sum argument benefits from the
-extension-mode soundness too.
+`arg.zig` now mirrors the STARK: `BiniusArg(F, max_tables)` stays the
+single-field construction (alias), `BiniusArgWith(F, E, max_tables, CP)` runs
+the product sum-check over the extension field `E` (F tables lifted by the
+zero-cost tower embedding) with a pluggable PCS, and `BiniusArgFri` wires in
+the polylog `FriPcs`. Tests cover extension-mode round trips, FRI round trips
+(single-field Gf256 and extension Gf16/Gf2_128), tamper rejection (wrong sum,
+wrong root), and an e2e proof-size check (k = 4..6, single-field) mirroring the
+STARK one. Runtime note: extension-mode sum-checks are slow in Debug — keep
+the FRI proof-size test single-field.
 
 ## 3. Soundness documentation (MEDIUM)
 
