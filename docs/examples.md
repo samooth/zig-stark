@@ -1,6 +1,6 @@
 # Examples
 
-Three end-to-end STARK proofs ship with the repository. All follow the same
+Four end-to-end STARK proofs ship with the repository. All follow the same
 shape: generate a valid execution trace, run the prover, run the verifier, and
 confirm that a forged claim is rejected.
 
@@ -11,6 +11,7 @@ zig build
 ./zig-out/bin/fibonacci
 ./zig-out/bin/ml_linear
 ./zig-out/bin/rescue
+./zig-out/bin/binius_adder
 ```
 
 ## Fibonacci
@@ -216,4 +217,48 @@ final state:    1620044097 654387451 611328641 1042552547
 verifier accepted proof: true
 verifier rejected forged final state: true
 claim matches direct round computation
+```
+
+## Binius 4-bit adder
+
+`examples/binius_adder/src/main.zig`
+
+This one exercises the *other* stack (`src/binius`): a zero-check STARK over a
+binary tower field instead of the M31 DEEP-FRI construction. A batch of `2^k`
+independent 4-bit additions `x + y = s` is proved with one 4-bit ripple-carry
+adder gadget (`src/binius/adder.zig`). The witness has 16 bit-sliced columns
+(`a_0..a_3, b_0..b_3, s_0..s_3, c_1..c_4`) and 16 pointwise constraints: 8
+booleanity, 4 full-adder sum, and 4 carry equations.
+
+The gadget runs over the witness field `F = Gf256` with the protocol lifted to
+the extension field `E = Gf2_128` (`BiniusStark(F, E, ...)`), so Schwartz-Zippel
+soundness stays ≈ 2^-128 even though `F` is a small byte field. Boundary pins
+make the first instance's five output bits (`s_0..s_3, c_4`) a public statement:
+they are folded into the zero-check and re-sampled as challenges, so the
+verifier does not trust the witness for the claimed result.
+
+The example demonstrates the failure modes: a tampered commitment root is
+rejected, a re-proved witness that violates the sum constraint at every point is
+rejected, and altering the public input string or a pin value re-derives
+different Fiat-Shamir challenges and is rejected. It also prints the proof-size
+breakdown, where the eval openings dominate because the default PCS
+(`CommittedMlePcs`) opens every one of the `2^k` hypercube entries per column —
+the motivation for the sub-linear `FriPcs` layer in `src/binius/fripcs.zig`.
+
+Running it (`k = 4`, 16 additions, Debug build):
+
+```
+binius 4-bit ripple-carry adder batch (16 additions, k=4)
+  columns:    16
+  constraints:16 (+5 boundary pins)
+  prove:      73411.22 ms
+  verify:     2422.58 ms
+  verifier accepted proof: true
+  x0 + y0 = 5 + 2 = 7; pinned as a boundary assertion
+  sumcheck:   640 B
+  eval opens: 33024 B (16 columns x 16 entries)
+  verifier rejected tampered commitment: true
+  verifier rejected forged witness: true
+  verifier rejected altered public input: true
+  verifier rejected altered boundary pin: true
 ```

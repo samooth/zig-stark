@@ -34,7 +34,9 @@ The source tree is split into three modules, re-exported by `src/root.zig`:
   AIR abstractions, univariate polynomials, FRI, and the DEEP-FRI STARK.
   Field-element hashing lives here (`src/m31/hash.zig`).
 - `binius` — binary-field (Binius/BSV) stack over GF(2^k): zero-check constraints,
-  combined sum-check, Fiat-Shamir binding, and batched MLE evaluation proofs.
+  combined sum-check, Fiat-Shamir binding, and pluggable committed-MLE
+  evaluation proofs (`CommittedMlePcs`, sub-linear `PackedPcs` and polylog
+  `FriPcs`).
 
 ```
 src/
@@ -50,10 +52,23 @@ src/
     fri.zig     FRI low-degree test (commit, fold, queries)
     stark.zig   DEEP-FRI STARK prover / verifier (incl. LogUp lookups) + test AIRs
   binius/       Binary-field stack (GF(2^k) zero-check sum-check)
+    tower.zig   Canonical Wiedemann tower: Gf2 .. Gf2_128
+    field.zig   BinaryField GF(2^k) arithmetic
+    sumcheck.zig    Sum-check over binary fields
+    polynomial.zig  Multilinear polynomials, univariate interpolation
+    pack.zig    Packed-MLE interpolation/evaluation
+    pcs.zig     Merkle-bound committed multilinear PCS (O(2^k) openings)
+    packed_pcs.zig  Sub-linear PCS via row packing + column Merkle tree
+    fripcs.zig  Polylog FRI-Binius PCS (FRI fold in lockstep with the eval sum-check)
+    stark.zig   Zero-check STARK prover / verifier (pluggable PCS)
+    adder.zig   Bit-sliced ripple-carry adder gadget
+    addfri.zig  Additive FRI low-degree test over the tower field
+    arg.zig     Argument composition (sum-check + committed PCS)
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation (degree-5 sbox)
   ml_linear/    STARK proving a single linear layer y = w . x
+  binius_adder/ Binius STARK proving a batch of 4-bit additions
 tests/          Library and end-to-end tests
 docs/           This documentation
 ```
@@ -63,7 +78,7 @@ docs/           This documentation
 Requires Zig 0.16.x.
 
 ```sh
-zig build            # builds the three example executables
+zig build            # builds the four example executables
 zig build test       # runs the library unit tests and e2e tests
 zig test src/root.zig # equivalent unit-test entry point
 ```
@@ -74,9 +89,10 @@ Run the examples:
 ./zig-out/bin/fibonacci
 ./zig-out/bin/rescue
 ./zig-out/bin/ml_linear
+./zig-out/bin/binius_adder
 ```
 
-All three prove a statement, verify it, and reject a forged claim.
+All four prove a statement, verify it, and reject a forged claim.
 
 ## Soundness of the committed protocol
 
@@ -108,9 +124,13 @@ algebraic identities.
 ## Binius extension-field soundness
 
 The binary-field stack (`binius`) lets the protocol run over an extension field
-`E` of the witness field `F` (`BiniusStark(F, E, max_cols)`, `MlePcs(F, E)`,
-`CommittedMlePcs(F, E)`; take `E = F` for the classic single-field setting).
-The witness columns, the Merkle-committed tables, and the leaves stay in `F`,
+`E` of the witness field `F` (`BiniusStark(F, E, max_cols)`, `MlePcs(F, E)`;
+take `E = F` for the classic single-field setting). The PCS is a parameter of
+the STARK (`BiniusStarkWith`, plus the `BiniusStarkFri` convenience for the
+polylog FRI-Binius PCS): `CommittedMlePcs(F, E)` opens every hypercube entry,
+while `PackedPcs` (row packing + column Merkle tree) and `FriPcs` (FRI fold in
+lockstep with the eval sum-check, O(polylog) proofs) are sub-linear. The
+witness columns, the Merkle-committed tables, and the leaves stay in `F`,
 while the zero-check point τ, the combination coefficients α_t, the sum-check
 round challenges, and the PCS query points are sampled in `E`. Base-field
 entries enter the sum-check by the zero-cost tower embedding (identical bit
