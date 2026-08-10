@@ -4,7 +4,7 @@ Current status: zero-check STARK over the tower field with a pluggable
 committed-MLE PCS (`BiniusStarkWith`): the O(2^k) `CommittedMlePcs`, the
 sub-linear `PackedPcs`, and the sub-linear polylog FRI-Binius PCS
 (`fripcs.zig`, FRI-fold in lockstep with the eval sum-check). Extension-field
-`(F, E)` soundness mode, boundary pins, and a batched 4-bit adder gadget. 180 tests.
+`(F, E)` soundness mode, boundary pins, and a batched 4-bit adder gadget. 184 tests.
 
 ## 1. Sub-linear MLE evaluation / commitment (HIGH, DONE — polylog route landed)
 
@@ -47,6 +47,15 @@ Notes:
   value; our `claim_k == final_folded·∏(1+r_j+ch_j)` check closes that gap.
 - Reuses the core Merkle + Blake3 transcript; proofs own their memory
   (`Proof.deinit`).
+- **DONE — default wiring.** `BiniusStarkFri(F, E, max_cols, log_blowup,
+  num_queries)` in `stark.zig` exposes the zero-check STARK with `FriPcs` as
+  its PCS; the 4-bit adder e2e uses it, and `BiniusStark` remains the O(2^k)
+  `CommittedMlePcs` oracle. The proof-size test (`tests/e2e_tests.zig`,
+  single-field Gf256 for Debug speed) runs both PCS at k = 4..6 and asserts
+  (a) the FRI eval-section units grow < 2x per k step while the committed
+  ones double, and (b) FRI wins at k = 6 (~2.4x smaller; measured 3008 vs
+  7184 units). Runtime note: extension-mode (Gf2_128) prove at k ≥ 5 is
+  minutes in Debug — keep size tests single-field.
 
 ## 2. Generalize `BiniusArg(F, max_tables)` to `(F, E)` (MEDIUM)
 

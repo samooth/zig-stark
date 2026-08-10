@@ -106,7 +106,7 @@ fn biniusAdderFriRoundTrip(k: usize, tamper: bool) !bool {
     const E = zig_stark.binius.tower.Gf2_128;
     const FriPcs = zig_stark.binius.fripcs.FriPcsStark(F, E, 2, 4);
     const Adder = zig_stark.binius.adder.AdderWith(F, E, FriPcs);
-    const Stark = zig_stark.binius.stark.BiniusStarkWith(F, E, Adder.num_columns, FriPcs);
+    const Stark = zig_stark.binius.stark.BiniusStarkFri(F, E, Adder.num_columns, 2, 4);
     const Hash = zig_stark.hash.Hash;
 
     const n = @as(usize, 1) << @intCast(k);
@@ -149,4 +149,95 @@ test "e2e: Binius 4-bit adder with sub-linear FRI PCS round-trip" {
 
 test "e2e: Binius adder with FRI PCS rejects tampered committed witness" {
     try std.testing.expect(!try biniusAdderFriRoundTrip(4, true));
+}
+
+/// Field/digest "units" in the PCS eval section of a FRI-PCS Stark proof.
+fn friEvalUnits(proof: anytype) usize {
+    var total: usize = 0;
+    for (proof.evals) |e| {
+        const p = e.pcs;
+        total += 2; // claimed value + final folded value
+        total += p.rounds.len * 4; // 3 coeffs + challenge per round
+        total += p.layer_roots.len;
+        for (p.queries) |q| {
+            for (q.layers) |lp| total += 2 + lp.path.len;
+        }
+    }
+    return total;
+}
+
+/// Field/digest "units" in the PCS eval section of a committed-MLE Stark proof
+/// (the 2^k opened leaves + their Merkle paths dominate).
+fn cmleEvalUnits(proof: anytype) usize {
+    var total: usize = 0;
+    for (proof.evals) |e| {
+        const p = e.pcs;
+        total += 1 + p.entries.len;
+        for (p.paths) |path| total += path.len;
+    }
+    return total;
+}
+
+test "e2e: FRI PCS proof size is sub-linear vs committed-MLE (k = 4..6)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Single-field (E = F = Gf256): the proof-size structure is identical to
+    // extension mode, but the zero-check sum-check runs in fast byte-level
+    // arithmetic instead of the slow Gf2_128 tower mul in Debug builds.
+    const F = zig_stark.binius.tower.Gf256;
+    const E = zig_stark.binius.tower.Gf256;
+    const Hash = zig_stark.hash.Hash;
+    const FriPcs = zig_stark.binius.fripcs.FriPcsStark(F, E, 2, 4);
+    const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F, E);
+
+    const AdderFri = zig_stark.binius.adder.AdderWith(F, E, FriPcs);
+    const StarkFri = zig_stark.binius.stark.BiniusStarkFri(F, E, AdderFri.num_columns, 2, 4);
+    const AdderCm = zig_stark.binius.adder.AdderWith(F, E, CommittedPcs);
+    const StarkCm = zig_stark.binius.stark.BiniusStarkWith(F, E, AdderCm.num_columns, CommittedPcs);
+
+    var prev_fri: usize = 0;
+    var cm_last: usize = 0;
+    for (4..7) |k| {
+        const n = @as(usize, 1) << @intCast(k);
+        const x = try alloc.alloc(u4, n);
+        const y = try alloc.alloc(u4, n);
+        for (0..n) |i| {
+            x[i] = @intCast((i * 3 + 5) % 16);
+            y[i] = @intCast((i * 7 + 2) % 16);
+        }
+
+        const cols = try AdderFri.generateWitness(alloc, x, y);
+        var pf = try StarkFri.prove(alloc, k, &cols, &AdderFri.constraints, &.{}, "");
+        defer pf.deinit(alloc);
+        var roots: [AdderFri.num_columns]Hash.Digest = undefined;
+        for (0..AdderFri.num_columns) |c| {
+            var tree = try FriPcs.commit(alloc, cols[c]);
+            roots[c] = tree.root();
+        }
+        try std.testing.expect(try StarkFri.verify(alloc, k, &roots, &AdderFri.constraints, &.{}, pf, ""));
+        const fri_units = friEvalUnits(pf);
+
+        const cols_cm = try AdderCm.generateWitness(alloc, x, y);
+        var pc = try StarkCm.prove(alloc, k, &cols_cm, &AdderCm.constraints, &.{}, "");
+        defer pc.deinit(alloc);
+        var roots_cm: [AdderCm.num_columns]Hash.Digest = undefined;
+        for (0..AdderCm.num_columns) |c| {
+            var tree = try CommittedPcs.commit(alloc, cols_cm[c]);
+            roots_cm[c] = tree.root();
+        }
+        try std.testing.expect(try StarkCm.verify(alloc, k, &roots_cm, &AdderCm.constraints, &.{}, pc, ""));
+        const cm_units = cmleEvalUnits(pc);
+
+        if (prev_fri != 0) {
+            // FRI proof grows strictly sub-exponentially (< 2x per k step).
+            try std.testing.expect(fri_units < 2 * prev_fri);
+        }
+        prev_fri = fri_units;
+        cm_last = cm_units;
+    }
+    // The crossover has decisively passed by k = 6: the FRI proof is smaller
+    // than the committed-MLE proof, which grows O(2^k · k) in entries+paths.
+    try std.testing.expect(prev_fri < cm_last);
 }

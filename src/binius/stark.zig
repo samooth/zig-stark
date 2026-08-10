@@ -1,6 +1,7 @@
 const std = @import("std");
 const SumcheckMod = @import("sumcheck.zig");
 const PcsMod = @import("pcs.zig");
+const FriPcsMod = @import("fripcs.zig");
 const CoreHash = @import("../core/hash/hash.zig");
 const Channel = @import("../core/channel/channel.zig").Channel;
 
@@ -50,6 +51,20 @@ const Channel = @import("../core/channel/channel.zig").Channel;
 /// the committed witness.
 pub fn BiniusStark(comptime F: type, comptime E: type, comptime max_cols: usize) type {
     return StarkInner(F, E, max_cols, PcsMod.CommittedMlePcs(F, E));
+}
+
+/// Same zero-check STARK, but with the sub-linear polylog FRI-Binius PCS
+/// (`FriPcs` from `fripcs.zig`) as the committed-MLE layer. Proofs grow
+/// polynomially in k instead of O(2^k). `log_blowup >= 1` is required and
+/// `k + log_blowup <= F.BITS`; `num_queries` is the FRI query count.
+pub fn BiniusStarkFri(
+    comptime F: type,
+    comptime E: type,
+    comptime max_cols: usize,
+    comptime log_blowup: u8,
+    comptime num_queries: usize,
+) type {
+    return StarkInner(F, E, max_cols, FriPcsMod.FriPcsStark(F, E, log_blowup, num_queries));
 }
 
 /// Same zero-check STARK, but with a caller-chosen committed-MLE PCS. The PCS
