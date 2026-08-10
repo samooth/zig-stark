@@ -110,7 +110,7 @@ pub fn BiniusStark(comptime F: type) type {
                 h.update(&b);
                 h.final(&buf);
                 if (F.SIZE == 1) {
-                    tau[j] = F.fromInt(buf[31] & 0x0f);
+                    tau[j] = F.fromInt(buf[31]);
                 } else {
                     var out: [F.SIZE]u8 = undefined;
                     @memcpy(&out, buf[32 - F.SIZE ..][0..F.SIZE]);
@@ -133,7 +133,7 @@ pub fn BiniusStark(comptime F: type) type {
                 h.update(&b);
                 h.final(&buf);
                 if (F.SIZE == 1) {
-                    alphas[t] = F.fromInt(buf[31] & 0x0f);
+                    alphas[t] = F.fromInt(buf[31]);
                 } else {
                     var out: [F.SIZE]u8 = undefined;
                     @memcpy(&out, buf[32 - F.SIZE ..][0..F.SIZE]);
@@ -629,6 +629,36 @@ test "stark runs over tower GF(256)" {
         roots[0] = tree.root();
     }
     try std.testing.expect(try SF.verify(alloc, k, &roots, &constraints, proof));
+}
+
+test "challenges span the full GF(256) field" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const SF = BiniusStark(Gf256);
+
+    var roots = [_]CoreHash.Hash.Digest{CoreHash.Hash.hashBytes("roots")};
+    const tau = try SF.challengePoint(alloc, 64, &roots);
+    var seed = [_]u8{0x5a} ** 32;
+    const alphas = try SF.combinationCoeffs(alloc, 64, &seed);
+
+    // Regression for the 4-bit mask bug: τ and α_t must span more than the
+    // 16 values reachable with a 4-bit challenge on an 8-bit field.
+    var seen = [_]bool{false} ** 256;
+    var count: usize = 0;
+    for (tau) |v| {
+        if (!seen[@as(usize, @intCast(v.value))]) {
+            seen[@as(usize, @intCast(v.value))] = true;
+            count += 1;
+        }
+    }
+    for (alphas) |v| {
+        if (!seen[@as(usize, @intCast(v.value))]) {
+            seen[@as(usize, @intCast(v.value))] = true;
+            count += 1;
+        }
+    }
+    try std.testing.expect(count > 16);
 }
 
 test "stark runs over the Script field GF(16)" {

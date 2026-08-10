@@ -7,8 +7,9 @@ const Polynomial = @import("polynomial.zig");
 ///
 /// where each `f_j` is a multilinear polynomial supplied as its 2^k hypercube
 /// evaluation table. The Fiat-Shamir transcript uses SHA256 and a per-round
-/// challenge `r_i` taken as the last 4 bits of the digest, mirroring the
-/// Bitcoin Script verifier, so a proof produced here can be re-checked on-chain.
+/// challenge `r_i` taken as the last byte of the digest masked to the field's
+/// bit width (4 bits for GF(16), mirroring the Bitcoin Script verifier), so a
+/// proof produced here can be re-checked on-chain.
 ///
 /// Convention: round i folds the *lowest* remaining variable (adjacent table
 /// pairs `(2j, 2j+1)`), which is exactly the ordering used by
@@ -33,7 +34,8 @@ pub fn Sumcheck(comptime F: type) type {
             indices: []const usize,
         };
 
-        /// Fiat-Shamir transcript (SHA256, challenge = last 4 bits of digest).
+        /// Fiat-Shamir transcript (SHA256, challenge = last byte of digest masked
+        /// to the field's bit width).
         pub const Transcript = struct {
             buf: [32]u8,
 
@@ -63,7 +65,9 @@ pub fn Sumcheck(comptime F: type) type {
                 }
                 hasher.final(&self.buf);
                 if (F.SIZE == 1) {
-                    return F.fromInt(self.buf[31] & 0x0f);
+                    // fromInt masks to the field's bit width (4 bits for GF(16),
+                    // 8 bits for GF(256)), so the challenge uses the full space.
+                    return F.fromInt(self.buf[31]);
                 }
                 var out: [F.SIZE]u8 = undefined;
                 @memcpy(&out, self.buf[32 - F.SIZE ..][0..F.SIZE]);
@@ -506,4 +510,21 @@ test "combination sum-check round trips" {
     const v2 = try p2.eval(alloc, rr.challenges);
     const expected = fe(2).mul(v0.mul(v2)).add(fe(3).mul(v1));
     try std.testing.expect(expected.eq(rr.current_sum));
+}
+
+test "challenges span the full GF(256) field" {
+    // Regression for the 4-bit mask bug: for a 1-byte field the challenge must
+    // use the full BITS bits, not just the low 4.
+    const Gf256 = @import("tower.zig").Gf256;
+    var t = Sumcheck(Gf256).Transcript.initBytes("challenge-space");
+    var seen = [_]bool{false} ** 256;
+    var count: usize = 0;
+    for (0..64) |i| {
+        const c = t.absorb(&[_]Gf256{Gf256.fromInt(i)});
+        if (!seen[@as(usize, @intCast(c.value))]) {
+            seen[@as(usize, @intCast(c.value))] = true;
+            count += 1;
+        }
+    }
+    try std.testing.expect(count > 16);
 }
