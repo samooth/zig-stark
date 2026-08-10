@@ -104,3 +104,36 @@ naive circle FFT with stwo's O(n log n) recursive-fold algorithm in `src/m31/ntt
    A-then-B.
 4. Known-value tests (constant, f = x, f = y in the FFT basis) give ground truth
    independent of the fold reference.
+
+## Additive FRI over the binary tower field
+
+- FRI over an additive subgroup halves the domain with the map q(x) = x² + h·x, NOT with
+  squaring: over a binary tower field the Frobenius map x → x² is a permutation (a field
+  automorphism), so it cannot halve anything. q is GF(2)-linear with kernel exactly
+  {0, h}, collapsing each pair {x, x+h} onto a single point q(x) of the halved domain.
+- Because squaring and rooting are automorphisms over GF(2), evaluation commutes with
+  them and the "column interpolation" fold
+      f'(y) = ( f(x)(α + x + h) + f(x+h)(α + x) ) / h
+  maps a polynomial of degree < d on D_i to one of degree < d/2 on D_{i+1}. Checked by
+  hand on GF(16): folding f = x² (degree 2) over {0, 1, X₀, 1+X₀} with α = 0 yields
+  f'(y) = y (degree 1), and a second fold gives a constant.
+- In the "low-bits" basis (point j = fromInt(j)) the pair property
+  points[i][j + n/2] = points[i][j] + h_i holds with h_i = fromInt(2^(D-i-1)) only at
+  layer 0. Folding through q sends x and x+h to the same value, so every deeper layer has
+  a different pair distance. Don't derive h_i from a formula: pass both preimage points to
+  the fold and compute h = x + xh inside it, or read h_i = points[i][0] + points[i][n/2]
+  off the points themselves.
+- The additive domain is a GF(2)-subspace of the tower field, so its size is bounded by
+  the field bit width: D = log_size + log_blowup ≤ BITS (4 for Gf16, 8 for Gf256).
+- Round-trip success only demonstrates completeness. An honest proof of a high-degree
+  function passes every fold-consistency check; the one check that breaks is
+  final-layer-vs-remainder (the remainder is interpolated in the low-degree code, so a
+  random last layer agrees with it at only ~2^-BITS of positions). The soundness test is
+  therefore a non-low-degree codeword (e.g. a random function via proveCodeword) and it
+  must be rejected.
+- Fiat-Shamir binds more than the query positions: the verifier re-derives each fold
+  challenge α from the transcript (as sumcheck.runRounds does) and the query indices, and
+  rejects if they do not match the proof, so a cheating prover cannot pick degenerate
+  challenges. Keep the transcript order (roots → α → remainder → indices) byte-identical
+  in both directions.
+

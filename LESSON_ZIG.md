@@ -88,3 +88,26 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
   Comparing a concrete input/output byte-for-byte caught one such error.
 - Sign commits with `git commit -S`; verify with `git log --show-signature -1`.
 - Keep temporary reference clones out of git (`.tmp/` added to `.gitignore`).
+
+## 0.16.0-dev std gotchas (Additive FRI session)
+
+- `std.ArrayList` has no `init(allocator)` in this build; the type only exposes `empty`,
+  `initCapacity`, `initBuffer`. When the element count is known up front (FRI layers,
+  alphas, queries) prefer a plain `allocator.alloc` slice over an ArrayList entirely.
+- `[32]u8` (e.g. `Hash.Digest`) does not support `==` / `!=`; compare with
+  `std.mem.eql(u8, &a, &b)`.
+- Tower field `zero()` / `one()` are functions, not constants: `Gf256.one` (no
+  parentheses) has type `fn () T` and only errors at the call site — keep the parens.
+- `toBytes` writes into a caller buffer (`out: *[SIZE]u8`) rather than returning an
+  array; `Hash.hash2` takes two `[32]u8` digests, not byte slices.
+- A method with a value receiver auto-derefs when called through a pointer:
+  `tree.open(pn, alloc)` on a `*MerkleTree` field works directly.
+- `errdefer` over a partially filled slice must track a filled count: freeing
+  `layers[0..L]` when only `[0..k]` were initialized is UB. Increment the count after
+  each successful fill (the `committed` / `qbuilt` pattern).
+- With `testing.allocator`, every allocation must be freed even on success paths: a
+  `prove` helper that builds a codeword must free it after `proveCodeword` copies it, and
+  the final folded FRI layer (used only for remainder interpolation, never committed)
+  needs an explicit free.
+- Random in tests: `rnd.uintLessThan(u32, bound)`, not `rnd.uint(u32)`.
+
