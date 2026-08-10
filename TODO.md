@@ -47,8 +47,12 @@ committing the *packed* MLE as a univariate polynomial and FRI-ing it.
      recompute f(r) = Σ_y β(y)·h(y) from a *committed* h, and run an eval
      sum-check that ends in f(r') where f(r') itself is obtained via the packed
      route — chain of two, still needs a sound h↔g binding.
-3. Wire into `CommittedMlePcs(F, E)` as an alternative opening mode; keep the
-   O(2^k) mode as a test oracle.
+3. Wire into the STARK — DONE: `BiniusStarkWith(F, E, max_cols, Pcs)` in
+   `stark.zig` makes the committed-MLE PCS a parameter; `PackedPcsStark`
+   (`src/binius/packed_pcs.zig`) adapts `PackedPcs` to that interface (k1 = k -
+   k2, RS domain capped by `F.BITS`), and `BiniusStark` still defaults to
+   `CommittedMlePcs` as the O(2^k) test oracle. End-to-end packed-mode tests
+   cover Gf16, Gf256 (k=6), and (F=Gf16, E=Gf2^128).
 4. Extension-field support (eval point r ∈ E): FRI currently runs over the base
    tower field F; the packed protocol must evaluate g at E-points (coefficient
    extraction generalizes to E ⊇ F).

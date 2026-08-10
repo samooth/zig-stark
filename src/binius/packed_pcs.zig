@@ -236,6 +236,7 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
             d2n: usize,
             num: usize,
         ) ![]usize {
+            if (num > d2n) return error.TooManyQueries;
             const out = try allocator.alloc(usize, num);
             errdefer allocator.free(out);
             var chosen = std.AutoHashMap(usize, void).init(allocator);
@@ -368,6 +369,60 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
                 value = value.add(beta.mul(evalE(proof.t, lift(F.fromInt(j)))));
             }
             return proof.value.eq(value);
+        }
+    };
+}
+
+/// Packing configuration for the STARK adapter. The row length `k2` and the
+/// Reed-Solomon rate are capped by the base field: the extended domain has
+/// `2^(k2 + log_blowup)` points and must sit inside the field, so
+/// `k2 + log_blowup <= F.BITS` (the element bit-width, e.g. 4 for Gf16).
+pub const StarkPackedConfig = struct {
+    /// log2 of the row length (packed elements per row).
+    k2: u8,
+    /// log2 of the RS rate.
+    log_blowup: u8,
+    /// number of columns the verifier samples.
+    num_queries: usize,
+};
+
+/// Adapter exposing `PackedPcs` behind the same interface the zero-check STARK
+/// expects of `CommittedMlePcs`: `commit(allocator, table)`,
+/// `proveEval(allocator, k, table, r)` and `verifyEval(allocator, root, k, r,
+/// proof)`, with the packing params derived from `k` and the comptime `config`.
+/// This makes `PackedPcs` a drop-in alternative opening mode for `BiniusStark`
+/// (`BiniusStarkWith`), so proofs stay sub-linear instead of opening all 2^k
+/// entries.
+pub fn PackedPcsStark(comptime F: type, comptime E: type, comptime config: StarkPackedConfig) type {
+    return struct {
+        const P = PackedPcs(F, E);
+        const Hash = CoreHash.Hash;
+        const MerkleTree = CoreMerkle.MerkleTree;
+
+        pub const Proof = P.Proof;
+
+        fn params(k: usize) P.Params {
+            std.debug.assert(config.k2 <= k);
+            std.debug.assert(config.k2 + config.log_blowup <= F.BITS);
+            return .{
+                .k1 = @intCast(k - config.k2),
+                .k2 = config.k2,
+                .log_blowup = config.log_blowup,
+                .num_queries = config.num_queries,
+            };
+        }
+
+        pub fn commit(allocator: std.mem.Allocator, table: []const F) !MerkleTree {
+            const k = std.math.log2_int(usize, table.len);
+            return P.commit(allocator, params(k), table);
+        }
+
+        pub fn proveEval(allocator: std.mem.Allocator, k: usize, table: []const F, r: []const E) !Proof {
+            return P.proveEval(allocator, params(k), table, r);
+        }
+
+        pub fn verifyEval(allocator: std.mem.Allocator, root: Hash.Digest, k: usize, r: []const E, proof: Proof) !bool {
+            return P.verifyEval(allocator, params(k), root, r, proof);
         }
     };
 }

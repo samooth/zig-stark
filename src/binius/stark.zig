@@ -49,9 +49,22 @@ const Channel = @import("../core/channel/channel.zig").Channel;
 /// sum-check transcript, so all randomness binds to the public statement and
 /// the committed witness.
 pub fn BiniusStark(comptime F: type, comptime E: type, comptime max_cols: usize) type {
+    return StarkInner(F, E, max_cols, PcsMod.CommittedMlePcs(F, E));
+}
+
+/// Same zero-check STARK, but with a caller-chosen committed-MLE PCS. The PCS
+/// must expose `Proof`, `commit(allocator, table) -> MerkleTree`,
+/// `proveEval(allocator, k, table, r) -> Proof` and
+/// `verifyEval(allocator, root, k, r, proof) -> bool`. `CommittedMlePcs` opens
+/// all 2^k entries; `PackedPcsStark` (from `packed_pcs.zig`) opens only the
+/// packed rows and a few sampled columns, giving sub-linear proofs.
+pub fn BiniusStarkWith(comptime F: type, comptime E: type, comptime max_cols: usize, comptime CP: type) type {
+    return StarkInner(F, E, max_cols, CP);
+}
+
+fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comptime CP: type) type {
     return struct {
         const SC = SumcheckMod.Sumcheck(E);
-        const CP = PcsMod.CommittedMlePcs(F, E);
         const M = PcsMod.MlePcs(F, E);
         const Hash = CoreHash.Hash;
 
@@ -1079,4 +1092,194 @@ test "stark with boundary pins over the GF(2^128) extension" {
         .{ .col = 0, .point = 6, .value = w[6] },
     };
     try std.testing.expect(!try SF.verify(alloc, k, &roots, &constraints, &bad_pins, proof, ""));
+}
+
+// ---------------------------------------------------------------------------
+// Packed-PCS opening mode (sub-linear commitments via PackedPcsStark)
+// ---------------------------------------------------------------------------
+
+const PcsPacked = @import("packed_pcs.zig");
+
+test "packed PCS mode: booleanness round trip over Gf16" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
+    const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
+
+    const k = 3;
+    var w: [8]Gf16 = undefined;
+    for (0..8) |i| w[i] = fe(@intFromBool((i * 3 + 1) % 2 == 1));
+
+    const booleanness = [_]SP.Monomial{
+        .{ .coeff = fe(1), .factors = &.{0} },
+        .{ .coeff = fe(1), .factors = &.{ 0, 0 } },
+    };
+    const constraints = [_]SP.Constraint{.{
+        .terms = &booleanness,
+    }};
+
+    const columns = [_][]const Gf16{&w};
+    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+
+    var roots: [1]CoreHash.Hash.Digest = undefined;
+    {
+        var tree = try Pcs.commit(alloc, &w);
+        roots[0] = tree.root();
+    }
+    try std.testing.expect(try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
+}
+
+test "packed PCS mode: multiplication relation h = f·g over Gf256 at k=6" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Pcs = PcsPacked.PackedPcsStark(Gf256, Gf256, .{ .k2 = 3, .log_blowup = 2, .num_queries = 6 });
+    const SP = BiniusStarkWith(Gf256, Gf256, 16, Pcs);
+
+    const k = 6;
+    var f: [64]Gf256 = undefined;
+    var g: [64]Gf256 = undefined;
+    var h: [64]Gf256 = undefined;
+    for (0..64) |i| {
+        f[i] = Gf256.fromInt((i * 5 + 2) % 256);
+        g[i] = Gf256.fromInt((i * 3 + 7) % 256);
+        h[i] = f[i].mul(g[i]);
+    }
+
+    // R = h + f·g == 0
+    const rel = [_]SP.Monomial{
+        .{ .coeff = Gf256.one(), .factors = &.{2} },
+        .{ .coeff = Gf256.one(), .factors = &.{ 0, 1 } },
+    };
+    const constraints = [_]SP.Constraint{.{
+        .terms = &rel,
+    }};
+
+    const columns = [_][]const Gf256{ &f, &g, &h };
+    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+
+    var roots: [3]CoreHash.Hash.Digest = undefined;
+    {
+        var tf = try Pcs.commit(alloc, &f);
+        var tg = try Pcs.commit(alloc, &g);
+        var th = try Pcs.commit(alloc, &h);
+        roots[0] = tf.root();
+        roots[1] = tg.root();
+        roots[2] = th.root();
+    }
+    try std.testing.expect(try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
+}
+
+test "packed PCS mode: round trip in the extension field (F=Gf16, E=Gf2^128)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf2_128, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
+    const SP = BiniusStarkWith(Gf16, Gf2_128, 16, Pcs);
+
+    const k = 2;
+    var w: [4]Gf16 = undefined;
+    for (0..4) |i| w[i] = fe(@intFromBool((i * 3 + 1) % 2 == 1));
+
+    const booleanness = [_]SP.Monomial{
+        .{ .coeff = fe(1), .factors = &.{0} },
+        .{ .coeff = fe(1), .factors = &.{ 0, 0 } },
+    };
+    const constraints = [_]SP.Constraint{.{
+        .terms = &booleanness,
+    }};
+
+    const columns = [_][]const Gf16{&w};
+    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+
+    var roots: [1]CoreHash.Hash.Digest = undefined;
+    {
+        var tree = try Pcs.commit(alloc, &w);
+        roots[0] = tree.root();
+    }
+    try std.testing.expect(try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
+}
+
+test "packed PCS mode: wrong product is rejected" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
+    const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
+
+    // h' = h + 1 is not f·g; the prover's witness violates the constraint, so
+    // the zero-check sum Σ (h' + f·g) = Σ 1 = 1 ≠ 0 survives any τ and the
+    // packed-PCS openings (which are honest w.r.t. the committed roots) cannot
+    // rescue it.
+    const k = 3;
+    var f: [8]Gf16 = undefined;
+    var g: [8]Gf16 = undefined;
+    var hp: [8]Gf16 = undefined;
+    for (0..8) |i| {
+        f[i] = fe((i * 5 + 2) % 16);
+        g[i] = fe((i * 3 + 7) % 16);
+        hp[i] = f[i].mul(g[i]).add(fe(1));
+    }
+
+    const rel = [_]SP.Monomial{
+        .{ .coeff = fe(1), .factors = &.{2} },
+        .{ .coeff = fe(1), .factors = &.{ 0, 1 } },
+    };
+    const constraints = [_]SP.Constraint{.{
+        .terms = &rel,
+    }};
+
+    const columns = [_][]const Gf16{ &f, &g, &hp };
+    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+
+    var roots: [3]CoreHash.Hash.Digest = undefined;
+    {
+        var tf = try Pcs.commit(alloc, &f);
+        var tg = try Pcs.commit(alloc, &g);
+        var th = try Pcs.commit(alloc, &hp);
+        roots[0] = tf.root();
+        roots[1] = tg.root();
+        roots[2] = th.root();
+    }
+    try std.testing.expect(!try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
+}
+
+test "packed PCS mode: wrong commitment root is rejected" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
+    const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
+
+    const k = 3;
+    var w: [8]Gf16 = undefined;
+    for (0..8) |i| w[i] = fe(@intFromBool((i * 3 + 1) % 2 == 1));
+    var wrong: [8]Gf16 = w;
+    wrong[0] = wrong[0].add(fe(1));
+
+    const booleanness = [_]SP.Monomial{
+        .{ .coeff = fe(1), .factors = &.{0} },
+        .{ .coeff = fe(1), .factors = &.{ 0, 0 } },
+    };
+    const constraints = [_]SP.Constraint{.{
+        .terms = &booleanness,
+    }};
+
+    const columns = [_][]const Gf16{&w};
+    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+
+    // Commit a different table: the Merkle opening of the opened column can no
+    // longer match, so the packed PCS evaluation check fails.
+    var roots: [1]CoreHash.Hash.Digest = undefined;
+    {
+        var tree = try Pcs.commit(alloc, &wrong);
+        roots[0] = tree.root();
+    }
+    try std.testing.expect(!try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
 }
