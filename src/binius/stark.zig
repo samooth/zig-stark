@@ -108,7 +108,13 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
             sumcheck: SC.Proof,
             /// One eval proof per *distinct* factor column, at the sum-check's
             /// challenge point, in first-occurrence order of `factors`.
-            evals: []const EvalProof,
+            evals: []EvalProof,
+
+            pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
+                self.sumcheck.deinit(allocator);
+                for (self.evals) |*e| e.pcs.deinit(allocator);
+                allocator.free(self.evals);
+            }
         };
 
         /// Derive the protocol randomness from a single Fiat-Shamir channel.
@@ -195,34 +201,16 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
         /// tables are laid out k at a time per distinct point, so both sides
         /// must agree on this ordering. Caller frees the returned slice.
         fn distinctPoints(allocator: std.mem.Allocator, pins: []const Pin) ![]usize {
-            var count: usize = 0;
-            for (pins, 0..) |pin, i| {
-                var seen = false;
-                for (0..i) |j| {
-                    if (pins[j].point == pin.point) {
-                        seen = true;
-                        break;
-                    }
-                }
-                if (!seen) count += 1;
-            }
-
-            const out = try allocator.alloc(usize, count);
-            var n: usize = 0;
+            var seen = std.AutoHashMap(usize, void).init(allocator);
+            defer seen.deinit();
+            var out: std.ArrayList(usize) = .empty;
+            defer out.deinit(allocator);
             for (pins) |pin| {
-                var seen = false;
-                for (0..n) |j| {
-                    if (out[j] == pin.point) {
-                        seen = true;
-                        break;
-                    }
-                }
-                if (!seen) {
-                    out[n] = pin.point;
-                    n += 1;
-                }
+                if (seen.contains(pin.point)) continue;
+                try seen.put(pin.point, {});
+                try out.append(allocator, pin.point);
             }
-            return out;
+            return try out.toOwnedSlice(allocator);
         }
 
         /// Build the boundary-pin constraints appended after the user's: for

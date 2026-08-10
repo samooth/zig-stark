@@ -25,6 +25,11 @@ pub fn Sumcheck(comptime F: type) type {
             /// rounds[i] = m+1 low-first coefficients of the univariate
             /// polynomial s_i(t) = Σ_{rest} ∏_j f_j^(i)(rest, t).
             rounds: []const []const F,
+
+            pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
+                for (self.rounds) |coeffs| allocator.free(coeffs);
+                allocator.free(self.rounds);
+            }
         };
 
         /// One monomial c·∏_{j∈indices} tables[j] of a linear combination;

@@ -21,12 +21,17 @@ const CoreHash = @import("../core/hash/hash.zig");
 /// XOR is field addition and the majority carry is a sum of three degree-2
 /// monomials, with no carry-propagation cost in the constraint system.
 pub fn Adder(comptime F: type, comptime E: type) type {
+    return AdderWith(F, E, PcsMod.CommittedMlePcs(F, E));
+}
+
+/// The 4-bit ripple-carry adder wired into any `BiniusStarkWith` PCS.
+pub fn AdderWith(comptime F: type, comptime E: type, comptime CP: type) type {
     return struct {
         pub const num_bits = 4;
         pub const num_columns = 4 * num_bits; // a, b, s, c (c_0 implicit)
         pub const num_constraints = 4 * num_bits; // 8 bool + 4 sum + 4 carry
 
-        const Stark = StarkMod.BiniusStark(F, E, num_columns);
+        const Stark = StarkMod.BiniusStarkWith(F, E, num_columns, CP);
         pub const Monomial = Stark.Monomial;
         pub const Constraint = Stark.Constraint;
 

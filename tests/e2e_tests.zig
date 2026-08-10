@@ -64,7 +64,8 @@ fn biniusAdderRoundTrip(k: usize, tamper: bool) !bool {
     }
 
     const columns = try Adder.generateWitness(alloc, x, y);
-    const proof = try Stark.prove(alloc, k, &columns, &Adder.constraints, &.{}, "");
+    var proof = try Stark.prove(alloc, k, &columns, &Adder.constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     if (tamper) {
         // Flip one sum bit in a re-committed witness: the roots no longer
@@ -94,4 +95,58 @@ test "e2e: Binius 4-bit adder batch prove/verify round-trip" {
 
 test "e2e: Binius adder rejects tampered committed witness" {
     try std.testing.expect(!try biniusAdderRoundTrip(4, true));
+}
+
+fn biniusAdderFriRoundTrip(k: usize, tamper: bool) !bool {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const F = zig_stark.binius.tower.Gf256;
+    const E = zig_stark.binius.tower.Gf2_128;
+    const FriPcs = zig_stark.binius.fripcs.FriPcsStark(F, E, 2, 4);
+    const Adder = zig_stark.binius.adder.AdderWith(F, E, FriPcs);
+    const Stark = zig_stark.binius.stark.BiniusStarkWith(F, E, Adder.num_columns, FriPcs);
+    const Hash = zig_stark.hash.Hash;
+
+    const n = @as(usize, 1) << @intCast(k);
+    const x = try alloc.alloc(u4, n);
+    const y = try alloc.alloc(u4, n);
+    for (0..n) |i| {
+        x[i] = @intCast((i * 3 + 5) % 16);
+        y[i] = @intCast((i * 7 + 2) % 16);
+    }
+
+    const columns = try Adder.generateWitness(alloc, x, y);
+    var proof = try Stark.prove(alloc, k, &columns, &Adder.constraints, &.{}, "");
+    defer proof.deinit(alloc);
+
+    if (tamper) {
+        // Re-commit a modified witness: the roots no longer match the proof,
+        // so the verifier rejects.
+        var bad: [Adder.num_columns][]F = undefined;
+        for (0..Adder.num_columns) |c| bad[c] = try alloc.dupe(F, columns[c]);
+        bad[Adder.colS(1)][3] = bad[Adder.colS(1)][3].add(F.one());
+        var bad_roots: [Adder.num_columns]Hash.Digest = undefined;
+        for (0..Adder.num_columns) |c| {
+            var tree = try FriPcs.commit(alloc, bad[c]);
+            bad_roots[c] = tree.root();
+        }
+        return try Stark.verify(alloc, k, &bad_roots, &Adder.constraints, &.{}, proof, "");
+    }
+
+    var roots: [Adder.num_columns]Hash.Digest = undefined;
+    for (0..Adder.num_columns) |c| {
+        var tree = try FriPcs.commit(alloc, columns[c]);
+        roots[c] = tree.root();
+    }
+    return try Stark.verify(alloc, k, &roots, &Adder.constraints, &.{}, proof, "");
+}
+
+test "e2e: Binius 4-bit adder with sub-linear FRI PCS round-trip" {
+    try std.testing.expect(try biniusAdderFriRoundTrip(4, false));
+}
+
+test "e2e: Binius adder with FRI PCS rejects tampered committed witness" {
+    try std.testing.expect(!try biniusAdderFriRoundTrip(4, true));
 }

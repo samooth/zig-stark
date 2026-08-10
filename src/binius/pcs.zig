@@ -37,6 +37,10 @@ pub fn MlePcs(comptime F: type, comptime E: type) type {
         pub const Proof = struct {
             value: E,
             sumcheck: SC.Proof,
+
+            pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
+                self.sumcheck.deinit(allocator);
+            }
         };
 
         /// Embed a base-field element into the extension field. For `E = F`
@@ -210,9 +214,16 @@ pub fn CommittedMlePcs(comptime F: type, comptime E: type) type {
             value: E,
             sumcheck: SC.Proof,
             /// The 2^k opened leaves (the evaluation table) and one Merkle
-            /// path per leaf, both indexed by the hypercube point.
+            /// path per leaf, both indexed by the hypercube point. `entries`
+            /// borrows the prover's table and is not freed here.
             entries: []const F,
             paths: [][]Hash.Digest,
+
+            pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
+                self.sumcheck.deinit(allocator);
+                for (self.paths) |p| allocator.free(p);
+                allocator.free(self.paths);
+            }
         };
 
         fn hashElement(v: F) Hash.Digest {
