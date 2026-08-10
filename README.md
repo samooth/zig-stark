@@ -16,6 +16,7 @@ Working end-to-end on both stacks:
 - [`docs/overview.md`](docs/overview.md) — architecture, field tower, module layout, build/test/run instructions
 - [`docs/protocol.md`](docs/protocol.md) — the full DEEP-FRI protocol: composition, quotient, DEEP combination, FRI, and the exact transcript order
 - [`docs/examples.md`](docs/examples.md) — how the Fibonacci and linear-ML examples work, and how to write a new AIR
+- [`docs/binius.md`](docs/binius.md) — the binary-field stack's soundness: transcript order, every Schwartz-Zippel error term, concrete `(Gf256, Gf2_128)` security, the FRI final-check and packing identities
 
 ## Project structure
 
@@ -78,6 +79,8 @@ Run the examples:
 - `M31` — the prime field modulo `2^31 - 1` (Mersenne). Scalar and SIMD (`Vec8`) operations: `add`, `sub`, `mul`, `neg`, `inv`, `pow`, `primitiveRootOfUnity`.
 - `CM31` — quadratic extension of M31 (`M31[i]`).
 - `QM31` — quartic extension (tower `M31 -> CM31 -> QM31`), the "secure" field carrying the full 2^32-th roots of unity used for FRI and STARK arithmetic.
+- `Gf16` / `Gf256` — `BinaryField` over GF(2^4) / GF(2^8) (`src/binius/field.zig`), small script-friendly witness fields.
+- `tower.Gf2 .. Gf2_128` — the canonical Wiedemann tower of binary fields (`src/binius/tower.zig`); `Gf2_128 = TowerField(7)` is the usual soundness extension field `E` (≈ 2^-128 Schwartz-Zippel error) for a small base `F`.
 
 ## License
 

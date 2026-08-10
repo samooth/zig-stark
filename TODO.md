@@ -69,13 +69,16 @@ wrong root), and an e2e proof-size check (k = 4..6, single-field) mirroring the
 STARK one. Runtime note: extension-mode sum-checks are slow in Debug — keep
 the FRI proof-size test single-field.
 
-## 3. Soundness documentation (MEDIUM)
+## 3. Soundness documentation — DONE
 
-`docs/overview.md` has the informal ≈1/|E| note. Add a `docs/binius.md` with:
-- transcript order (public inputs, pins, roots, τ, α_t, sum-check seed, PCS),
-- every Schwartz-Zippel application and its error term,
-- concrete security level for the default (Gf256, Gf2_128) config,
-- the packing/evaluation identity above and its proof.
+`docs/binius.md` records the exact transcript order (outer channel →
+zero-check sum-check → per-PCS transcripts), every Schwartz-Zippel application
+with its error term (combination α_t, zero-check point τ, sum-check round
+challenges, eval sum-check, FRI fold challenges, PackedPcs column queries),
+the concrete `(Gf256, Gf2_128)` figure (~2^-123 algebraic error), the
+`claim_k == final_folded·∏(1+r_j+ch_j)` final-check derivation, and the
+packing/evaluation identity with proof. `docs/overview.md` keeps the informal
+≈1/|E| note.
 
 ## 4. More binius AIRs / gadget framework (MEDIUM)
 
