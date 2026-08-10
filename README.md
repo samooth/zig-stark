@@ -7,9 +7,9 @@ A STARK (Scalable Transparent Argument of Knowledge) proof system implemented in
 Working end-to-end on both stacks:
 
 - **M31 DEEP-FRI STARK** — the prover and verifier in `src/m31/stark.zig` handle any AIR implementing the `GenericStark` interface, including optional preprocessed columns and **LogUp multiset lookups**, with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer.
-- **Binius binary-field stack** — a zero-check STARK (`src/binius/stark.zig`) over the canonical Wiedemann tower of binary fields (`src/binius/tower.zig`), combining committed multilinear PCS openings via sum-check (`src/binius/sumcheck.zig`, `src/binius/pcs.zig`), with an additive FRI low-degree test (`src/binius/addfri.zig`) and a batched 4-bit ripple-carry adder gadget (`src/binius/adder.zig`) demonstrated by an end-to-end example.
+- **Binius binary-field stack** — a zero-check STARK (`src/binius/stark.zig`) over the canonical Wiedemann tower of binary fields (`src/binius/tower.zig`), combining committed multilinear PCS openings via sum-check (`src/binius/sumcheck.zig`, `src/binius/pcs.zig`), with an additive FRI low-degree test (`src/binius/addfri.zig`) and a batched 4-bit ripple-carry adder gadget (`src/binius/adder.zig`) demonstrated by an end-to-end example. The STARK is parameterized over field, extension field, and max column count, supports boundary pins (public column-point evaluations folded into the zero-check, like M31 boundary assertions), and all randomness flows through a single unified Fiat-Shamir channel (`src/core/channel/channel.zig`) that also binds public inputs. The protocol can run over a large extension field `E` (e.g. `tower.Gf2_128`) of a small witness field `F`, keeping ≈ 2^-128 Schwartz-Zippel soundness for script-friendly GF(16)/GF(256) witnesses at the price of `E`-field arithmetic.
 
-148 tests pass (143 unit + 5 end-to-end) with no leaks.
+158 tests pass (153 unit + 5 end-to-end) with no leaks.
 
 ## Documentation
 

@@ -42,7 +42,11 @@ pub const Channel = struct {
         for (values) |v| self.absorb(v);
     }
 
-    fn sampleBytes(self: *Channel, out: []u8) void {
+    /// Derive `out.len` challenge bytes from the current transcript state and
+    /// absorb the derived bytes back into the transcript, so later samples are
+    /// always fresh (correct Fiat-Shamir). Exposed so callers can seed a nested
+    /// transcript (e.g. the binius sum-check) from the channel state.
+    pub fn sampleBytes(self: *Channel, out: []u8) void {
         // Derive challenge bytes from the current transcript state and absorb
         // the derived bytes back into the transcript, so later samples are
         // always fresh (correct Fiat-Shamir).

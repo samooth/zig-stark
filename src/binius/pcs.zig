@@ -4,7 +4,8 @@ const SumcheckMod = @import("sumcheck.zig");
 const CoreHash = @import("../core/hash/hash.zig");
 const CoreMerkle = @import("../core/merkle/merkle.zig");
 
-/// Multilinear evaluation protocol for a binary field `F`.
+/// Multilinear evaluation protocol for a binary field `F` over the extension
+/// field `E` (take `E = F` for the plain single-field setting).
 ///
 /// Proves the claim `y = f(r)` for a multilinear polynomial `f` supplied as
 /// its 2^k hypercube evaluation table, by sum-checking the identity
@@ -16,33 +17,50 @@ const CoreMerkle = @import("../core/merkle/merkle.zig");
 /// The composed summand is the product of the k+1 multilinear polynomials
 /// `f, ℓ_0, …, ℓ_{k-1}`, so the existing `Sumcheck` applies directly.
 ///
-/// The query point `r` is bound into the Fiat-Shamir transcript (SHA256) before
-/// any challenge is derived, so a later commitment layer can seed the same
-/// transcript with a Merkle root and the protocol becomes a polynomial
-/// commitment scheme. In this module the verifier holds the table and recomputes
-/// the final MLE value itself.
-pub fn MlePcs(comptime F: type) type {
+/// The query point `r` lies in `E` and all round arithmetic runs in `E`, while
+/// the table entries live in `F` and are embedded (zero-cost, same bit pattern)
+/// into `E`. Working over a large extension `E` defeats degree-1 sum-check
+/// forgery even for tiny base fields `F`, at the price of `E` arithmetic; with
+/// `E = F` this degenerates to the classic construction.
+///
+/// The query point `r` is bound into the Fiat-Shamir transcript (Blake3, via
+/// `seedFor`) before any challenge is derived, so a later commitment layer can
+/// seed the same transcript with a Merkle root and the protocol becomes a
+/// polynomial commitment scheme. In this module the verifier holds the table
+/// and recomputes the final MLE value itself.
+pub fn MlePcs(comptime F: type, comptime E: type) type {
     return struct {
         const Self = @This();
-        const Multilinear = Polynomial.Multilinear(F);
-        const SC = SumcheckMod.Sumcheck(F);
+        const Multilinear = Polynomial.Multilinear(E);
+        const SC = SumcheckMod.Sumcheck(E);
 
         pub const Proof = struct {
-            value: F,
+            value: E,
             sumcheck: SC.Proof,
         };
 
-        /// Deterministic transcript seed binding the query point `r`.
-        pub fn seedFor(k: usize, r: []const F) [128]u8 {
-            var buf = [_]u8{0} ** 128;
-            var n: usize = 0;
-            var b: [F.SIZE]u8 = undefined;
+        /// Embed a base-field element into the extension field. For `E = F`
+        /// this is the identity; otherwise it is the zero-cost embedding of
+        /// the subfield represented by the low `LEVEL` bits.
+        pub fn lift(x: F) E {
+            if (F == E) return x;
+            return E.embed(F.LEVEL, x);
+        }
+
+        /// Deterministic transcript seed binding the query point `r`. The
+        /// point is hashed (Blake3) so the seed has fixed size regardless of
+        /// the extension degree and number of variables.
+        pub fn seedFor(k: usize, r: []const E) [32]u8 {
+            var h = std.crypto.hash.Blake3.init(.{});
+            h.update("zig-stark:mle-seed");
+            var b: [E.SIZE]u8 = undefined;
             for (r[0..k]) |v| {
                 v.toBytes(&b);
-                @memcpy(buf[n..][0..F.SIZE], &b);
-                n += F.SIZE;
+                h.update(&b);
             }
-            return buf;
+            var out: [32]u8 = undefined;
+            h.final(&out);
+            return out;
         }
 
         /// Build the k univariate Lagrange-basis tables ℓ_j, each of length
@@ -51,36 +69,36 @@ pub fn MlePcs(comptime F: type) type {
         pub fn kernelTables(
             allocator: std.mem.Allocator,
             k: usize,
-            r: []const F,
-        ) ![][]F {
+            r: []const E,
+        ) ![][]E {
             std.debug.assert(r.len == k);
             const n = @as(usize, 1) << @intCast(k);
-            const tables = try allocator.alloc([]F, k);
+            const tables = try allocator.alloc([]E, k);
             errdefer allocator.free(tables);
             for (0..k) |j| {
-                tables[j] = try allocator.alloc(F, n);
+                tables[j] = try allocator.alloc(E, n);
                 errdefer allocator.free(tables[j]);
                 const rj = r[j];
                 for (0..n) |i| {
                     const bit: u8 = @intFromBool((i >> @intCast(j)) & 1 == 1);
-                    tables[j][i] = F.fromInt(bit).add(F.one().add(rj));
+                    tables[j][i] = E.fromInt(bit).add(E.one().add(rj));
                 }
             }
             return tables;
         }
 
         /// Lagrange kernel β_r(x) = ∏_j (x_j + 1 + r_j), for boolean x.
-        pub fn kernelValue(r: []const F, x: []const F) F {
-            var acc = F.one();
+        pub fn kernelValue(r: []const E, x: []const E) E {
+            var acc = E.one();
             for (r, x) |rj, xj| {
-                acc = acc.mul(xj.add(F.one().add(rj)));
+                acc = acc.mul(xj.add(E.one().add(rj)));
             }
             return acc;
         }
 
         /// Result of the evaluation sum-check: the value and its proof.
         pub const EvalSumcheck = struct {
-            value: F,
+            value: E,
             sumcheck: SC.Proof,
         };
 
@@ -90,10 +108,14 @@ pub fn MlePcs(comptime F: type) type {
             allocator: std.mem.Allocator,
             k: usize,
             table: []const F,
-            r: []const F,
+            r: []const E,
         ) !EvalSumcheck {
             std.debug.assert(table.len == (@as(usize, 1) << @intCast(k)));
-            const p = Multilinear{ .evals = table };
+            const e = try allocator.alloc(E, table.len);
+            defer allocator.free(e);
+            for (table, 0..) |v, i| e[i] = lift(v);
+
+            const p = Multilinear{ .evals = e };
             const value = try p.eval(allocator, r);
 
             const kt = try kernelTables(allocator, k, r);
@@ -102,9 +124,9 @@ pub fn MlePcs(comptime F: type) type {
                 allocator.free(kt);
             }
 
-            const tables = try allocator.alloc([]const F, k + 1);
+            const tables = try allocator.alloc([]const E, k + 1);
             defer allocator.free(tables);
-            tables[0] = table;
+            tables[0] = e;
             for (0..k) |j| tables[j + 1] = kt[j];
 
             const seed = seedFor(k, r);
@@ -118,7 +140,7 @@ pub fn MlePcs(comptime F: type) type {
             allocator: std.mem.Allocator,
             k: usize,
             table: []const F,
-            r: []const F,
+            r: []const E,
         ) !Proof {
             const es = try evalSumcheck(allocator, k, table, r);
             return .{ .value = es.value, .sumcheck = es.sumcheck };
@@ -131,10 +153,13 @@ pub fn MlePcs(comptime F: type) type {
             allocator: std.mem.Allocator,
             k: usize,
             table: []const F,
-            r: []const F,
+            r: []const E,
             proof: Proof,
         ) !bool {
             std.debug.assert(table.len == (@as(usize, 1) << @intCast(k)));
+            const e = try allocator.alloc(E, table.len);
+            defer allocator.free(e);
+            for (table, 0..) |v, i| e[i] = lift(v);
 
             const kt = try kernelTables(allocator, k, r);
             defer {
@@ -142,16 +167,16 @@ pub fn MlePcs(comptime F: type) type {
                 allocator.free(kt);
             }
 
-            const tables = try allocator.alloc([]const F, k + 1);
+            const tables = try allocator.alloc([]const E, k + 1);
             defer allocator.free(tables);
-            tables[0] = table;
+            tables[0] = e;
             for (0..k) |j| tables[j + 1] = kt[j];
 
             const seed = seedFor(k, r);
             const ok = try SC.verifySeeded(allocator, k, tables, proof.sumcheck, &seed);
             if (!ok) return false;
 
-            const p = Multilinear{ .evals = table };
+            const p = Multilinear{ .evals = e };
             const value = try p.eval(allocator, r);
             return proof.value.eq(value);
         }
@@ -169,16 +194,20 @@ pub fn MlePcs(comptime F: type) type {
 /// fully sound construction over a plain Merkle tree. Sub-linear openings
 /// require a packed / folded commitment (Binius's tower, Zeromorph-style
 /// folding) and are a separate layer.
-pub fn CommittedMlePcs(comptime F: type) type {
+///
+/// As in `MlePcs`, the table lives in `F` (so hashing and Merkle opening stay
+/// over the base field) while the query point and all round arithmetic live in
+/// the extension `E`.
+pub fn CommittedMlePcs(comptime F: type, comptime E: type) type {
     return struct {
-        const SC = SumcheckMod.Sumcheck(F);
-        const M = MlePcs(F);
+        const SC = SumcheckMod.Sumcheck(E);
+        const M = MlePcs(F, E);
         const Hash = CoreHash.Hash;
         const MerkleTree = CoreMerkle.MerkleTree;
         const MerkleVerify = CoreMerkle.verify;
 
         pub const Proof = struct {
-            value: F,
+            value: E,
             sumcheck: SC.Proof,
             /// The 2^k opened leaves (the evaluation table) and one Merkle
             /// path per leaf, both indexed by the hypercube point.
@@ -205,7 +234,7 @@ pub fn CommittedMlePcs(comptime F: type) type {
             allocator: std.mem.Allocator,
             k: usize,
             table: []const F,
-            r: []const F,
+            r: []const E,
         ) !Proof {
             const n = @as(usize, 1) << @intCast(k);
             std.debug.assert(table.len == n);
@@ -232,7 +261,7 @@ pub fn CommittedMlePcs(comptime F: type) type {
             allocator: std.mem.Allocator,
             root: Hash.Digest,
             k: usize,
-            r: []const F,
+            r: []const E,
             proof: Proof,
         ) !bool {
             const n = @as(usize, 1) << @intCast(k);
@@ -248,16 +277,17 @@ pub fn CommittedMlePcs(comptime F: type) type {
                 if (!MerkleVerify(root, i, h, proof.paths[i])) return false;
             }
 
-            // f(p) = Σ_x β_p(x) f(x) for p = r and p = r'.
-            var x: [64]F = undefined;
-            var f_rprime = F.zero();
-            var f_r = F.zero();
+            // f(p) = Σ_x β_p(x) f(x) for p = r and p = r', with entries lifted
+            // from F into E.
+            var x: [64]E = undefined;
+            var f_rprime = E.zero();
+            var f_r = E.zero();
             for (0..n) |i| {
-                for (0..k) |j| x[j] = F.fromInt(@intFromBool((i >> @intCast(j)) & 1 == 1));
+                for (0..k) |j| x[j] = E.fromInt(@intFromBool((i >> @intCast(j)) & 1 == 1));
                 const beta_r = M.kernelValue(r, x[0..k]);
                 const beta_rp = M.kernelValue(rr.challenges, x[0..k]);
-                f_r = f_r.add(beta_r.mul(proof.entries[i]));
-                f_rprime = f_rprime.add(beta_rp.mul(proof.entries[i]));
+                f_r = f_r.add(beta_r.mul(M.lift(proof.entries[i])));
+                f_rprime = f_rprime.add(beta_rp.mul(M.lift(proof.entries[i])));
             }
 
             if (!f_r.eq(proof.value)) return false;
@@ -271,10 +301,25 @@ pub fn CommittedMlePcs(comptime F: type) type {
 // ---------------------------------------------------------------------------
 
 const Gf16 = @import("field.zig").Gf16;
-const P = MlePcs(Gf16);
+const Tg16 = @import("tower.zig").Gf16;
+const TowerField = @import("tower.zig").TowerField;
+const Gf2_128 = TowerField(7);
+const P = MlePcs(Gf16, Gf16);
+const Pg = MlePcs(Tg16, Tg16);
+const Pe = MlePcs(Tg16, Gf2_128);
+const CP = CommittedMlePcs(Gf16, Gf16);
+const CPe = CommittedMlePcs(Tg16, Gf2_128);
 
 fn fe(x: u128) Gf16 {
     return Gf16.fromInt(x);
+}
+
+fn te(x: u128) Tg16 {
+    return Tg16.fromInt(x);
+}
+
+fn ee(x: u128) Gf2_128 {
+    return Gf2_128.fromInt(x);
 }
 
 test "kernel identity equals multilinear extension at a point" {
@@ -371,7 +416,57 @@ test "tampered table fails verification" {
     try std.testing.expect(!try P.verifyEval(alloc, k, &other, &r, proof));
 }
 
-const CP = CommittedMlePcs(Gf16);
+test "extension mle evaluation round trips for k=1..4" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    inline for (.{ 1, 2, 3, 4 }) |k| {
+        const n = @as(usize, 1) << @intCast(k);
+        var table: [16]Tg16 = undefined;
+        for (0..n) |i| table[i] = te((i * 7 + k * 3) % 16);
+
+        var r: [4]Gf2_128 = undefined;
+        for (0..k) |j| r[j] = ee((j * 3 + 5) % 16);
+
+        const proof = try Pe.proveEval(alloc, k, table[0..n], r[0..k]);
+        try std.testing.expect(try Pe.verifyEval(alloc, k, table[0..n], r[0..k], proof));
+    }
+}
+
+test "extension eval agrees with plain eval on embedded base points" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const k = 3;
+    var table: [8]Tg16 = undefined;
+    for (0..8) |i| table[i] = te((i * 7 + 1) % 16);
+
+    // r restricted to the base subfield
+    const r = [_]Tg16{ te(3), te(7), te(1) };
+    const plain = try Pg.proveEval(alloc, k, &table, &r);
+
+    var re: [3]Gf2_128 = undefined;
+    for (0..k) |j| re[j] = ee(r[j].value);
+    const ext = try Pe.proveEval(alloc, k, &table, &re);
+
+    try std.testing.expectEqual(plain.value.value, ext.value.value);
+}
+
+test "extension tampered value fails verification" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const k = 3;
+    var table: [8]Tg16 = undefined;
+    for (0..8) |i| table[i] = te((i * 7 + 1) % 16);
+    const r = [_]Gf2_128{ ee(3), ee(7), ee(1) };
+
+    const proof = try Pe.proveEval(alloc, k, &table, &r);
+    try std.testing.expect(try Pe.verifyEval(alloc, k, &table, &r, proof));
+
+    const bad_value = Pe.Proof{ .value = proof.value.add(ee(1)), .sumcheck = proof.sumcheck };
+    try std.testing.expect(!try Pe.verifyEval(alloc, k, &table, &r, bad_value));
+}
 
 test "committed pcs round trips for k=1..4 against the root" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -424,4 +519,24 @@ test "committed pcs rejects wrong value, wrong root, tampered entries" {
     forged_entries[5] = forged_entries[5].add(fe(1));
     forged.entries = forged_entries;
     try std.testing.expect(!try CP.verifyEval(alloc, root, k, &r, forged));
+}
+
+test "extension committed pcs round trips for k=1..4" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    inline for (.{ 1, 2, 3, 4 }) |k| {
+        const n = @as(usize, 1) << @intCast(k);
+        var table: [16]Tg16 = undefined;
+        for (0..n) |i| table[i] = te((i * 9 + k * 5) % 16);
+
+        var tree = try CPe.commit(alloc, table[0..n]);
+        const root = tree.root();
+
+        var r: [4]Gf2_128 = undefined;
+        for (0..k) |j| r[j] = ee((j * 11 + 2) % 16);
+
+        const proof = try CPe.proveEval(alloc, k, table[0..n], r[0..k]);
+        try std.testing.expect(try CPe.verifyEval(alloc, root, k, r[0..k], proof));
+    }
 }

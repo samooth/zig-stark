@@ -1,6 +1,7 @@
 const std = @import("std");
 const StarkMod = @import("stark.zig");
-
+const PcsMod = @import("pcs.zig");
+const CoreHash = @import("../core/hash/hash.zig");
 /// Bit-sliced ripple-carry adder gadget for the Binius zero-check STARK.
 ///
 /// Each hypercube point p ∈ {0,1}^k holds one independent 4-bit addition
@@ -19,15 +20,15 @@ const StarkMod = @import("stark.zig");
 /// This is the classic demonstration of why binary fields fit Boolean circuits:
 /// XOR is field addition and the majority carry is a sum of three degree-2
 /// monomials, with no carry-propagation cost in the constraint system.
-pub fn Adder(comptime F: type) type {
+pub fn Adder(comptime F: type, comptime E: type) type {
     return struct {
-        const Stark = StarkMod.BiniusStark(F);
-        pub const Monomial = Stark.Monomial;
-        pub const Constraint = Stark.Constraint;
-
         pub const num_bits = 4;
         pub const num_columns = 4 * num_bits; // a, b, s, c (c_0 implicit)
         pub const num_constraints = 4 * num_bits; // 8 bool + 4 sum + 4 carry
+
+        const Stark = StarkMod.BiniusStark(F, E, num_columns);
+        pub const Monomial = Stark.Monomial;
+        pub const Constraint = Stark.Constraint;
 
         pub inline fn colA(i: usize) usize {
             std.debug.assert(i < num_bits);
@@ -160,10 +161,12 @@ pub fn Adder(comptime F: type) type {
 
 const Gf16 = @import("tower.zig").Gf16;
 const Gf256 = @import("tower.zig").Gf256;
+const TowerField = @import("tower.zig").TowerField;
+const Gf2_128 = TowerField(7);
 
 test "adder witness satisfies the constraints for all 256 input pairs" {
     inline for (.{ Gf16, Gf256 }) |F| {
-        const A = Adder(F);
+        const A = Adder(F, F);
         for (0..16) |xv| {
             for (0..16) |yv| {
                 try std.testing.expectEqual(@as(u8, @intCast(xv + yv)), A.result(@intCast(xv), @intCast(yv)));
@@ -176,7 +179,7 @@ test "adder bit relations match a reference bit-sliced addition" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const A = Adder(Gf16);
+    const A = Adder(Gf16, Gf16);
 
     const x = [_]u4{ 10, 0, 15, 8, 3 };
     const y = [_]u4{ 7, 0, 1, 8, 13 };
@@ -195,4 +198,27 @@ test "adder bit relations match a reference bit-sliced addition" {
         got |= @as(u8, @intCast(columns[A.colC(A.num_bits)][p].value)) << @intCast(A.num_bits);
         try std.testing.expectEqual(out[p], got);
     }
+}
+
+test "adder STARK round trips over the GF(2^128) extension" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const A = Adder(Gf16, Gf2_128);
+    const CP = PcsMod.CommittedMlePcs(Gf16, Gf2_128);
+
+    const k = 2;
+    const x = [_]u4{ 10, 0, 15, 8 };
+    const y = [_]u4{ 7, 0, 1, 8 };
+    const columns = try A.generateWitness(alloc, &x, &y);
+
+    var roots: [A.num_columns]CoreHash.Hash.Digest = undefined;
+    for (0..A.num_columns) |c| {
+        var tree = try CP.commit(alloc, columns[c]);
+        defer tree.deinit();
+        roots[c] = tree.root();
+    }
+
+    const proof = try A.Stark.prove(alloc, k, &columns, &A.constraints, &.{}, "");
+    try std.testing.expect(try A.Stark.verify(alloc, k, &roots, &A.constraints, &.{}, proof, ""));
 }

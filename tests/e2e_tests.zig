@@ -49,9 +49,10 @@ fn biniusAdderRoundTrip(k: usize, tamper: bool) !bool {
     const alloc = arena.allocator();
 
     const F = zig_stark.binius.tower.Gf16;
-    const Stark = zig_stark.binius.stark.BiniusStark(F);
-    const Adder = zig_stark.binius.adder.Adder(F);
-    const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F);
+    const E = zig_stark.binius.tower.Gf2_128;
+    const Adder = zig_stark.binius.adder.Adder(F, E);
+    const Stark = zig_stark.binius.stark.BiniusStark(F, E, Adder.num_columns);
+    const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F, E);
     const Hash = zig_stark.hash.Hash;
 
     const n = @as(usize, 1) << @intCast(k);
@@ -63,7 +64,7 @@ fn biniusAdderRoundTrip(k: usize, tamper: bool) !bool {
     }
 
     const columns = try Adder.generateWitness(alloc, x, y);
-    const proof = try Stark.prove(alloc, k, &columns, &Adder.constraints);
+    const proof = try Stark.prove(alloc, k, &columns, &Adder.constraints, &.{}, "");
 
     if (tamper) {
         // Flip one sum bit in a re-committed witness: the roots no longer
@@ -76,7 +77,7 @@ fn biniusAdderRoundTrip(k: usize, tamper: bool) !bool {
             var tree = try CommittedPcs.commit(alloc, bad[c]);
             bad_roots[c] = tree.root();
         }
-        return try Stark.verify(alloc, k, &bad_roots, &Adder.constraints, proof);
+        return try Stark.verify(alloc, k, &bad_roots, &Adder.constraints, &.{}, proof, "");
     }
 
     var roots: [Adder.num_columns]Hash.Digest = undefined;
@@ -84,7 +85,7 @@ fn biniusAdderRoundTrip(k: usize, tamper: bool) !bool {
         var tree = try CommittedPcs.commit(alloc, columns[c]);
         roots[c] = tree.root();
     }
-    return try Stark.verify(alloc, k, &roots, &Adder.constraints, proof);
+    return try Stark.verify(alloc, k, &roots, &Adder.constraints, &.{}, proof, "");
 }
 
 test "e2e: Binius 4-bit adder batch prove/verify round-trip" {

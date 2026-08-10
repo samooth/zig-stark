@@ -24,13 +24,13 @@ const CoreHash = @import("../core/hash/hash.zig");
 /// This is the core of a Binius prover: commit witness columns, prove a
 /// hypercube sum of their products, and open the few MLE evaluations the
 /// sum-check leaves the verifier with.
-pub fn BiniusArg(comptime F: type) type {
+pub fn BiniusArg(comptime F: type, comptime max_tables: usize) type {
     return struct {
         const SC = SumcheckMod.Sumcheck(F);
-        const CP = PcsMod.CommittedMlePcs(F);
+        const CP = PcsMod.CommittedMlePcs(F, F);
         const Hash = CoreHash.Hash;
 
-        pub const MaxTables = 16;
+        pub const MaxTables = max_tables;
 
         pub const EvalProof = struct {
             value: F,
@@ -128,7 +128,7 @@ pub fn BiniusArg(comptime F: type) type {
 // ---------------------------------------------------------------------------
 
 const Gf16 = @import("field.zig").Gf16;
-const A = BiniusArg(Gf16);
+const A = BiniusArg(Gf16, 16);
 
 fn fe(x: u128) Gf16 {
     return Gf16.fromInt(x);
@@ -157,7 +157,7 @@ test "binius arg round trip for m=1 and m=2, k=1..3" {
 
             var roots: [1]Hash.Digest = undefined;
             {
-                var tree = try @import("pcs.zig").CommittedMlePcs(Gf16).commit(alloc, t0[0..n]);
+                var tree = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, t0[0..n]);
                 roots[0] = tree.root();
             }
             try std.testing.expect(try A.verify(alloc, k, &roots, expected, proof));
@@ -171,8 +171,8 @@ test "binius arg round trip for m=1 and m=2, k=1..3" {
 
             var roots: [2]Hash.Digest = undefined;
             {
-                var tree0 = try @import("pcs.zig").CommittedMlePcs(Gf16).commit(alloc, t0[0..n]);
-                var tree1 = try @import("pcs.zig").CommittedMlePcs(Gf16).commit(alloc, t1[0..n]);
+                var tree0 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, t0[0..n]);
+                var tree1 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, t1[0..n]);
                 roots[0] = tree0.root();
                 roots[1] = tree1.root();
             }
@@ -200,8 +200,8 @@ test "binius arg rejects wrong claimed sum and wrong root" {
 
     var roots: [2]Hash.Digest = undefined;
     {
-        var tree0 = try @import("pcs.zig").CommittedMlePcs(Gf16).commit(alloc, &t0);
-        var tree1 = try @import("pcs.zig").CommittedMlePcs(Gf16).commit(alloc, &t1);
+        var tree0 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &t0);
+        var tree1 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &t1);
         roots[0] = tree0.root();
         roots[1] = tree1.root();
     }
@@ -215,7 +215,7 @@ test "binius arg rejects wrong claimed sum and wrong root" {
     bad[2] = bad[2].add(fe(1));
     var bad_root: [2]Hash.Digest = roots;
     {
-        var tree = try @import("pcs.zig").CommittedMlePcs(Gf16).commit(alloc, &bad);
+        var tree = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &bad);
         bad_root[0] = tree.root();
     }
     try std.testing.expect(!try A.verify(alloc, k, &bad_root, expected, proof));

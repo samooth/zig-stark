@@ -111,3 +111,78 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
   needs an explicit free.
 - Random in tests: `rnd.uintLessThan(u32, bound)`, not `rnd.uint(u32)`.
 
+## Unified Fiat-Shamir channel + comptime params (max_cols session)
+
+- The binius STARK previously derived τ, α_t and the sum-check seed through four
+  ad-hoc `Sha256.init` helpers (`seedForRoots`, `seedFor`, `challengePoint`,
+  `combinationCoeffs`) that never absorbed public inputs. Replaced them all with
+  the shared core `Channel` (Blake3, m31-style): absorb public-input bytes, then
+  the roots; `sample(F)` τ and α_t; `sampleBytes(&seed)` to seed the nested
+  sum-check transcript. One source of randomness, prover/verifier replay it
+  verbatim, and public inputs are bound.
+- To expose the channel state for seeding a nested transcript, `sampleBytes`
+  was promoted from private to `pub` on the core `Channel`; it already absorbs
+  the derived bytes back (correct Fiat-Shamir), so later samples stay fresh.
+- `BiniusStark(F)` and `BiniusArg(F)` became `BiniusStark(F, comptime max_cols)`
+  and `BiniusArg(F, comptime max_tables)`: the 16-column cap is now a comptime
+  parameter. Zig has no default type/param values, so every call site must pass
+  it. The adder ties it to its own `num_columns` (`4 * num_bits`), so bumping the
+  gadget width later grows the STARK cap automatically.
+- Gotcha: a comptime struct const that is only used inside a helper becomes
+  unused-if-dead — but `domain` (`Channel.init(domain)`) stays referenced, and
+  tests read it via `BiniusStark(Gf256, 16).domain` without instantiating.
+- The `sample(F)`-based challenges use each field's `fromBytes` (which masks to
+  `BITS`), so the 4-bit-mask regression still holds: `fromInt` masks to 4/8 bits
+  on `SIZE == 1` tower fields.
+
+## Boundary pins (public assertions) session
+
+- Pins are enforced in the same zero-check as user constraints: the indicator
+  constraint `δ_p(x)·(w_col(x) + value) = 0` with `δ_p(x) = ∏_j (x_j + 1 + p_j)`,
+  written as two monomials (`1·δ_p·w_col`, `value·δ_p`). The pin-kernel tables
+  ℓ_j = x_j + 1 + p_j are public (never committed) and live in shared-table slots
+  after the witness columns and the τ-kernel; both sides rebuild them from the
+  pin points, so the verifier evaluates them at τ' without an opening.
+- The pins are absorbed into the Fiat-Shamir channel (`col`, `point`, `value`)
+  before the roots, so any pin change re-derives every challenge.
+- Soundness of a single-point pin is `1 - (deg + 1)/|F|`-ish (the combined
+  constraint R vanishes everywhere except the pinned point, so the zero-check
+  catches it unless the combination coefficient α_p or β_τ(p) vanishes). Tests
+  rely on the deterministic per-instance α/τ, exactly like the pre-existing
+  "non-boolean witness is rejected" test.
+- Allocator gotcha: never `return out[0..count]` and later `free` it. Freeing a
+  slice whose `.len` differs from the allocation trips the debug allocator's
+  size check ("Invalid free"). Allocate the exact count after a counting pass
+  (see `distinctPoints`).
+- The `errdefer`/`defer` tracked-count pair (free the `filled` prefix on both
+  paths) is needed again for the pin-kernel table batch and the pin-constraint
+  batch, same as the FRI layers.
+
+## Extension-field (E) soundness session
+
+- The binius PCS and STARK are now parameterized over (F, E):
+  `MlePcs(F, E)`, `CommittedMlePcs(F, E)`, `BiniusStark(F, E, max_cols)`,
+  `Adder(F, E)`; take `E = F` for the classic single-field setting. The witness,
+  the Merkle leaves, and the commitments stay in `F`; τ, α_t, the sum-check
+  round challenges, and the PCS query points live in `E`; base entries are
+  lifted via `E.embed(F.LEVEL, x)` (zero-cost, identical bit string). Every
+  Schwartz-Zippel application then carries ≈ 1/|E|, so a script-friendly
+  GF(16)/GF(256) witness keeps ≈ 2^-128 soundness with `E = tower.Gf2_128`.
+  Cost: all sum-check arithmetic runs in `E` (~100× slower than GF(256) in
+  ReleaseFast, worse in Debug).
+- `lift` on `MlePcs` only compiles for `F != E` when `F` is a *tower* field
+  (has `LEVEL`); `field.zig`'s `BinaryField` has no `LEVEL` and a distinct bit
+  representation, so it can only be used with `E = F` — extending it is a
+  compile error, which is correct because embedding it into the tower is not
+  bit-compatible.
+- `seedFor` switched from packing `[128]u8` to a Blake3 digest: the raw pack
+  truncated the bound point once `E` reached 128 bits and k grew (16·k > 128).
+- Gotcha: `E.SIZE` is a `u8` (16 for Gf2_128), so
+  `k * (dmax + 1) * E.SIZE` overflows `u8` in the example's proof-size
+  estimate — cast the leading factors to `usize`.
+- Debug builds over GF(2^128) are very slow (un-inlined recursive Karatsuba
+  tower mul, ~3^7 base ops per mul); the adder example exceeds two minutes in
+  Debug. Use ReleaseFast for extension-mode runs.
+
+
+

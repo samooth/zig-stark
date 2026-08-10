@@ -104,3 +104,25 @@ soundness-relevant properties of this implementation deserve emphasis:
 
 See [`protocol.md`](protocol.md) for the full transcript order and the exact
 algebraic identities.
+
+## Binius extension-field soundness
+
+The binary-field stack (`binius`) lets the protocol run over an extension field
+`E` of the witness field `F` (`BiniusStark(F, E, max_cols)`, `MlePcs(F, E)`,
+`CommittedMlePcs(F, E)`; take `E = F` for the classic single-field setting).
+The witness columns, the Merkle-committed tables, and the leaves stay in `F`,
+while the zero-check point τ, the combination coefficients α_t, the sum-check
+round challenges, and the PCS query points are sampled in `E`. Base-field
+entries enter the sum-check by the zero-cost tower embedding (identical bit
+string, `tower.TowerField.embed`), so the prover never re-commits.
+
+Why run the protocol in `E` at all? The evaluation sum-check composes the
+multilinear factors and sum-checks their degree-`d` product; a cheating prover
+is caught only by the Schwartz-Zippel randomness in τ, α_t, and the round
+challenges. In the single-field setting the soundness error is therefore
+≈ `1/|F|` per application — negligible for a 128-bit field, but only `1/16`
+(GF(16)) or `1/256` (GF(256)) when `F` is a small script-friendly field. Lifting
+the protocol to a large extension `E` (e.g. `tower.Gf2_128` = GF(2^128)) turns
+every `1/|F|` into `1/|E|`, keeping ≈ `2^-128` soundness while the witness stays
+tiny. The price is that all round arithmetic (the prover's dominant cost) runs
+in `E`, e.g. GF(2^128) instead of GF(256).
