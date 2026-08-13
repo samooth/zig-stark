@@ -114,6 +114,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(adder_example);
 
+    const bitpack_example = b.addExecutable(.{
+        .name = "binius_bitpack",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/binius_bitpack/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
+        }),
+    });
+    b.installArtifact(bitpack_example);
+
     // Benchmarks
     const bench_ntt = b.addExecutable(.{
         .name = "bench_ntt",

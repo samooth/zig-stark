@@ -1,6 +1,6 @@
 # Examples
 
-Four end-to-end STARK proofs ship with the repository. All follow the same
+Five end-to-end STARK proofs ship with the repository. All follow the same
 shape: generate a valid execution trace, run the prover, run the verifier, and
 confirm that a forged claim is rejected.
 
@@ -12,6 +12,7 @@ zig build
 ./zig-out/bin/ml_linear
 ./zig-out/bin/rescue
 ./zig-out/bin/binius_adder
+./zig-out/bin/binius_bitpack
 ```
 
 ## Fibonacci
@@ -262,3 +263,98 @@ binius 4-bit ripple-carry adder batch (16 additions, k=4)
   verifier rejected altered public input: true
   verifier rejected altered boundary pin: true
 ```
+
+## Binius bit-pack gadget
+
+`examples/binius_bitpack/src/main.zig`
+
+A batch of `2^k` independent `num_bits`-wide values is proved to be a valid
+bit decomposition of its packed field elements. The witness (`src/binius/
+bitpack.zig`) has `num_bits` boolean bit columns plus one packed value column,
+and `num_bits + 1` pointwise constraints: `num_bits` booleanity equations
+`b_i + b_i² = 0` and one pack equation `v = Σ_i b_i·e_i` with `e_i =
+fromInt(1<<i)`.
+
+Because a binary tower field's bit string *is* the coefficient vector in the
+standard basis, the pack equation is a field identity: a committed value is
+exactly the integer encoded by its bit columns. This is the primitive behind
+range checks and bit manipulation — any assertion "`x` is a valid `uN` whose
+bits are `b`" is `pack + booleanity`, so a verifier can commit to the bit
+columns and enforce the numeric value.
+
+The example runs over `F = Gf256` (`num_bits = 8`) with `E = Gf2_128`, pins
+the first instance's packed value as a public statement, and demonstrates the
+same failure modes as the adder (tampered commitment, forged witness, altered
+public input, altered pin).
+
+Running it (`k = 4`, 16 values, Debug build):
+
+```
+binius bit-pack gadget batch (16 values, k=4, 8-bit)
+  columns:    9
+  constraints:9 (+1 boundary pins)
+  prove:      224.15 ms
+  verify:     14.46 ms
+  verifier accepted proof: true
+  v0 = 7; pinned as a boundary assertion
+  sumcheck:   640 B
+  eval opens: 18576 B (9 columns x 16 entries)
+  verifier rejected tampered commitment: true
+  verifier rejected forged witness: true
+  verifier rejected altered public input: true
+  verifier rejected altered boundary pin: true
+```
+
+## Writing a custom Binius gadget
+
+The adder and bit-pack gadgets are the two reference implementations of the
+`BiniusStarkWith` interface. A gadget is a struct type with four pieces:
+
+```zig
+const MyGadget = struct {
+    // 1. Shape: one column per witness polynomial, one constraint per equation.
+    pub const num_columns = 2;
+    pub const num_constraints = 1;
+
+    // 2. Monomials with scalar coefficients in F and column indices as factors.
+    pub const constraints: [num_constraints]Stark.Constraint = [_]Stark.Constraint{
+        .{ .terms = &.{
+            .{ .coeff = F.one(), .factors = &.{0} },
+            .{ .coeff = F.fromInt(2), .factors = &.{1} },
+        } },
+    };
+
+    // 3. A witness builder (any signature you like).
+    pub fn generateWitness(allocator, ...) ![num_columns][]F { ... }
+
+    // 4. A column-slice accessor, so the verifier can index the right column.
+    pub fn colX(c: usize) usize { ... }
+};
+```
+
+The constraint is enforced at every hypercube point: the prover commits each
+column with the PCS, the sumcheck folds the constraints into one zero-check,
+and Fiat-Shamir challenges bind roots, pins, and the constraint choice. Only
+field arithmetic on the *monomial product* is performed, so any equation that
+is a polynomial identity over `F` can be expressed; the one requirement is
+that scalar coefficients live in `F`, not `E` (the protocol's linear
+combination is over `E`).
+
+How to choose between the layers:
+
+| You need...                          | Use                               | Interface                     |
+|--------------------------------------|-----------------------------------|-------------------------------|
+| Custom zero-check gadget over a tower field | `BiniusStarkWith(F, E, CP)` | `stark.zig`            |
+| Gadget with default PCS (eval-open every point) | `BiniusStark(F, E)` | `stark.zig`       |
+| Proofs with sub-linear openings (additive FRI) | `BiniusStarkFri(F, E, log_blowup, q)` | `stark.zig` |
+| A product-sum argument over `Gf2_128` | `BiniusArg(F, E)` (and `*Fri`, `*With`) | `arg.zig` |
+| Plug in any committed MLE PCS       | `CommittedMlePcs` / `FriPcs`      | `pcs.zig` / `fripcs.zig`      |
+
+`BiniusArg` and `BiniusStark` are distinct protocols: the argument (`arg.zig`)
+proves a *sum* over the hypercube of a rational product, while the STARK
+(`stark.zig`) proves a *zero-check* (the constraint polynomials vanish at
+every point). Both build on the same field, sumcheck, and PCS layers. See
+[`binius.md`](binius.md) for the protocol-level differences and the memory
+model. The `*With` variants are the canonical interface — `BiniusStark(F, E)`
+is `BiniusStarkWith(F, E, CommittedMlePcs(F, E))` — so any of the three PCS
+backends can be swapped in without touching gadget code.

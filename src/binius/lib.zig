@@ -7,6 +7,7 @@ pub const pcs = @import("pcs.zig");
 pub const arg = @import("arg.zig");
 pub const stark = @import("stark.zig");
 pub const adder = @import("adder.zig");
+pub const bitpack = @import("bitpack.zig");
 pub const tower = @import("tower.zig");
 pub const pack = @import("pack.zig");
 pub const packed_pcs = @import("packed_pcs.zig");

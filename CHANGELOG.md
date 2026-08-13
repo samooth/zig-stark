@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The public API follows
 [semantic versioning](https://semver.org/); pre-1.0 minor bumps may introduce
 breaking changes.
 
+## [Unreleased]
+
+### Added
+
+- `src/binius/bitpack.zig`: a bit-pack gadget for the zero-check STARK. Each
+  hypercube point holds one `num_bits`-wide value `v` plus `num_bits` boolean
+  bit columns; the constraints are `num_bits` booleanity equations plus one
+  pack equation `v = Σ_i b_i·e_i` (a field identity in the tower basis). This
+  is the primitive for range checks and bit manipulation. `BitPack(F, E)` and
+  `BitPackWith(F, E, CP)` mirror the adder gadget's `generateWitness` /
+  `freeWitness` / `result` API.
+- `examples/binius_bitpack`: an end-to-end example proving a batch of 16
+  8-bit values, with the first value pinned as a public statement.
+- `docs/examples.md`: a "Writing a custom Binius gadget" section with a
+  choose-your-stack table (`BiniusStark*`, `BiniusArg*`, PCS backends) and the
+  `BiniusArg` (product-sum) vs `BiniusStark` (zero-check) distinction.
+- `docs/binius.md` §9: a batched-openings design (batched FRI queries, one
+  Brakedown-style sumcheck for all eval openings, tower-size-1 packing) as a
+  TODO milestone (M2), not yet implemented.
+
 ## [0.2.0] - 2026-08-13
 
 ### Added
