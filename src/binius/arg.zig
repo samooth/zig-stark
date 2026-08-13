@@ -53,7 +53,15 @@ pub fn BiniusArgWith(comptime F: type, comptime E: type, comptime max_tables: us
         pub const Proof = struct {
             claimed_sum: E,
             main: SC.Proof,
-            evals: []const EvalProof,
+            evals: []EvalProof,
+
+            /// Owns `main` and `evals` (and each nested PCS proof); release with
+            /// `deinit(allocator)` using the allocator passed to `prove`.
+            pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
+                self.main.deinit(allocator);
+                for (self.evals) |*e| e.pcs.deinit(allocator);
+                allocator.free(self.evals);
+            }
         };
 
         /// Embed the F tables into E (identity when E == F, zero-cost tower
@@ -179,9 +187,7 @@ fn fe(x: u128) Gf16 {
 }
 
 test "binius arg round trip for m=1 and m=2, k=1..3" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const Hash = CoreHash.Hash;
 
     inline for (.{ 1, 2, 3 }) |k| {
@@ -197,11 +203,13 @@ test "binius arg round trip for m=1 and m=2, k=1..3" {
         {
             const tables = [_][]const Gf16{t0[0..n]};
             const expected = SumcheckMod.Sumcheck(Gf16).computeClaimedSum(n, &tables);
-            const proof = try A.prove(alloc, k, &tables);
+            var proof = try A.prove(alloc, k, &tables);
+            defer proof.deinit(alloc);
 
             var roots: [1]Hash.Digest = undefined;
             {
                 var tree = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, t0[0..n]);
+                defer tree.deinit();
                 roots[0] = tree.root();
             }
             try std.testing.expect(try A.verify(alloc, k, &roots, expected, proof));
@@ -211,12 +219,15 @@ test "binius arg round trip for m=1 and m=2, k=1..3" {
         {
             const tables = [_][]const Gf16{ t0[0..n], t1[0..n] };
             const expected = SumcheckMod.Sumcheck(Gf16).computeClaimedSum(n, &tables);
-            const proof = try A.prove(alloc, k, &tables);
+            var proof = try A.prove(alloc, k, &tables);
+            defer proof.deinit(alloc);
 
             var roots: [2]Hash.Digest = undefined;
             {
                 var tree0 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, t0[0..n]);
+                defer tree0.deinit();
                 var tree1 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, t1[0..n]);
+                defer tree1.deinit();
                 roots[0] = tree0.root();
                 roots[1] = tree1.root();
             }
@@ -226,9 +237,7 @@ test "binius arg round trip for m=1 and m=2, k=1..3" {
 }
 
 test "binius arg rejects wrong claimed sum and wrong root" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const Hash = CoreHash.Hash;
 
     const k = 3;
@@ -240,12 +249,15 @@ test "binius arg rejects wrong claimed sum and wrong root" {
     }
     const tables = [_][]const Gf16{ &t0, &t1 };
     const expected = SumcheckMod.Sumcheck(Gf16).computeClaimedSum(8, &tables);
-    const proof = try A.prove(alloc, k, &tables);
+    var proof = try A.prove(alloc, k, &tables);
+    defer proof.deinit(alloc);
 
     var roots: [2]Hash.Digest = undefined;
     {
         var tree0 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &t0);
+        defer tree0.deinit();
         var tree1 = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &t1);
+        defer tree1.deinit();
         roots[0] = tree0.root();
         roots[1] = tree1.root();
     }
@@ -260,6 +272,7 @@ test "binius arg rejects wrong claimed sum and wrong root" {
     var bad_root: [2]Hash.Digest = roots;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &bad);
+        defer tree.deinit();
         bad_root[0] = tree.root();
     }
     try std.testing.expect(!try A.verify(alloc, k, &bad_root, expected, proof));
@@ -280,9 +293,7 @@ fn expectedSumE(comptime E: type, n: usize, tables: []const []const E) E {
 }
 
 test "binius arg extension-mode round trip (F=Gf16, E=Gf2_128)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const Hash = CoreHash.Hash;
 
     const F = Tower.Gf16;
@@ -302,12 +313,17 @@ test "binius arg extension-mode round trip (F=Gf16, E=Gf2_128)" {
         {
             const tables = [_][]const F{t0[0..n]};
             const lifted = try Arg.liftTables(alloc, &tables);
-            defer alloc.free(lifted[0]);
+            defer {
+                alloc.free(lifted[0]);
+                alloc.free(lifted);
+            }
             const expected = expectedSumE(E, n, lifted);
-            const proof = try Arg.prove(alloc, k, &tables);
+            var proof = try Arg.prove(alloc, k, &tables);
+            defer proof.deinit(alloc);
 
             var roots: [1]Hash.Digest = undefined;
             var tree = try @import("pcs.zig").CommittedMlePcs(F, E).commit(alloc, t0[0..n]);
+            defer tree.deinit();
             roots[0] = tree.root();
             try std.testing.expect(try Arg.verify(alloc, k, &roots, expected, proof));
         }
@@ -320,11 +336,14 @@ test "binius arg extension-mode round trip (F=Gf16, E=Gf2_128)" {
                 alloc.free(lifted);
             }
             const expected = expectedSumE(E, n, lifted);
-            const proof = try Arg.prove(alloc, k, &tables);
+            var proof = try Arg.prove(alloc, k, &tables);
+            defer proof.deinit(alloc);
 
             var roots: [2]Hash.Digest = undefined;
             var tree0 = try @import("pcs.zig").CommittedMlePcs(F, E).commit(alloc, t0[0..n]);
+            defer tree0.deinit();
             var tree1 = try @import("pcs.zig").CommittedMlePcs(F, E).commit(alloc, t1[0..n]);
+            defer tree1.deinit();
             roots[0] = tree0.root();
             roots[1] = tree1.root();
             try std.testing.expect(try Arg.verify(alloc, k, &roots, expected, proof));
@@ -333,14 +352,11 @@ test "binius arg extension-mode round trip (F=Gf16, E=Gf2_128)" {
 }
 
 test "binius arg with FRI PCS round trip (single-field and extension)" {
+    const alloc = std.testing.allocator;
     const Hash = CoreHash.Hash;
 
     // Single-field Gf256 (fast in Debug; FRI fold at D = k + 1).
     {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
-        const alloc = arena.allocator();
-
         const F = Tower.Gf256;
         const Arg = BiniusArgFri(F, F, 16, 1, 2);
 
@@ -359,11 +375,14 @@ test "binius arg with FRI PCS round trip (single-field and extension)" {
                 alloc.free(lifted);
             }
             const expected = expectedSumE(F, n, lifted);
-            const proof = try Arg.prove(alloc, k, &tables);
+            var proof = try Arg.prove(alloc, k, &tables);
+            defer proof.deinit(alloc);
 
             var roots: [2]Hash.Digest = undefined;
             var tree0 = try @import("fripcs.zig").FriPcs(F, F, 1, 2).commit(alloc, t0[0..n]);
+            defer tree0.deinit();
             var tree1 = try @import("fripcs.zig").FriPcs(F, F, 1, 2).commit(alloc, t1[0..n]);
+            defer tree1.deinit();
             roots[0] = tree0.root();
             roots[1] = tree1.root();
             try std.testing.expect(try Arg.verify(alloc, k, &roots, expected, proof));
@@ -372,10 +391,6 @@ test "binius arg with FRI PCS round trip (single-field and extension)" {
 
     // Extension mode F=Gf16, E=Gf2_128.
     {
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
-        const alloc = arena.allocator();
-
         const F = Tower.Gf16;
         const E = Tower.Gf2_128;
         const Arg = BiniusArgFri(F, E, 16, 1, 2);
@@ -395,11 +410,14 @@ test "binius arg with FRI PCS round trip (single-field and extension)" {
                 alloc.free(lifted);
             }
             const expected = expectedSumE(E, n, lifted);
-            const proof = try Arg.prove(alloc, k, &tables);
+            var proof = try Arg.prove(alloc, k, &tables);
+            defer proof.deinit(alloc);
 
             var roots: [2]Hash.Digest = undefined;
             var tree0 = try @import("fripcs.zig").FriPcs(F, E, 1, 2).commit(alloc, t0[0..n]);
+            defer tree0.deinit();
             var tree1 = try @import("fripcs.zig").FriPcs(F, E, 1, 2).commit(alloc, t1[0..n]);
+            defer tree1.deinit();
             roots[0] = tree0.root();
             roots[1] = tree1.root();
             try std.testing.expect(try Arg.verify(alloc, k, &roots, expected, proof));
@@ -408,9 +426,7 @@ test "binius arg with FRI PCS round trip (single-field and extension)" {
 }
 
 test "binius arg extension-mode rejects wrong claimed sum and wrong root" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const Hash = CoreHash.Hash;
 
     const F = Tower.Gf16;
@@ -431,12 +447,15 @@ test "binius arg extension-mode rejects wrong claimed sum and wrong root" {
         alloc.free(lifted);
     }
     const expected = expectedSumE(E, 8, lifted);
-    const proof = try Arg.prove(alloc, k, &tables);
+    var proof = try Arg.prove(alloc, k, &tables);
+    defer proof.deinit(alloc);
 
     var roots: [2]Hash.Digest = undefined;
     {
         var tree0 = try @import("pcs.zig").CommittedMlePcs(F, E).commit(alloc, &t0);
+        defer tree0.deinit();
         var tree1 = try @import("pcs.zig").CommittedMlePcs(F, E).commit(alloc, &t1);
+        defer tree1.deinit();
         roots[0] = tree0.root();
         roots[1] = tree1.root();
     }
@@ -451,6 +470,7 @@ test "binius arg extension-mode rejects wrong claimed sum and wrong root" {
     var bad_root: [2]Hash.Digest = roots;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(F, E).commit(alloc, &bad);
+        defer tree.deinit();
         bad_root[0] = tree.root();
     }
     try std.testing.expect(!try Arg.verify(alloc, k, &bad_root, expected, proof));

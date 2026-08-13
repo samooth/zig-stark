@@ -181,14 +181,13 @@ test "adder witness satisfies the constraints for all 256 input pairs" {
 }
 
 test "adder bit relations match a reference bit-sliced addition" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const A = Adder(Gf16, Gf16);
 
     const x = [_]u4{ 10, 0, 15, 8, 3 };
     const y = [_]u4{ 7, 0, 1, 8, 13 };
     const columns = try A.generateWitness(alloc, &x, &y);
+    defer A.freeWitness(alloc, &columns);
 
     var out: [5]u8 = undefined;
     A.results(&x, &y, &out);
@@ -206,9 +205,7 @@ test "adder bit relations match a reference bit-sliced addition" {
 }
 
 test "adder STARK round trips over the GF(2^128) extension" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const A = Adder(Gf16, Gf2_128);
     const CP = PcsMod.CommittedMlePcs(Gf16, Gf2_128);
 
@@ -216,6 +213,7 @@ test "adder STARK round trips over the GF(2^128) extension" {
     const x = [_]u4{ 10, 0, 15, 8 };
     const y = [_]u4{ 7, 0, 1, 8 };
     const columns = try A.generateWitness(alloc, &x, &y);
+    defer A.freeWitness(alloc, &columns);
 
     var roots: [A.num_columns]CoreHash.Hash.Digest = undefined;
     for (0..A.num_columns) |c| {
@@ -224,6 +222,7 @@ test "adder STARK round trips over the GF(2^128) extension" {
         roots[c] = tree.root();
     }
 
-    const proof = try A.Stark.prove(alloc, k, &columns, &A.constraints, &.{}, "");
+    var proof = try A.Stark.prove(alloc, k, &columns, &A.constraints, &.{}, "");
+    defer proof.deinit(alloc);
     try std.testing.expect(try A.Stark.verify(alloc, k, &roots, &A.constraints, &.{}, proof, ""));
 }

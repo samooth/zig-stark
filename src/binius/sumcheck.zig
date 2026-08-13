@@ -104,7 +104,10 @@ pub fn Sumcheck(comptime F: type) type {
             for (rounds, 0..) |coeffs, i| {
                 const s0 = evalPoly(coeffs, F.zero());
                 const s1 = evalPoly(coeffs, F.one());
-                if (!s0.add(s1).eq(current_sum)) return null;
+                if (!s0.add(s1).eq(current_sum)) {
+                    allocator.free(challenges);
+                    return null;
+                }
                 const r_i = transcript.absorb(coeffs);
                 challenges[i] = r_i;
                 current_sum = evalPoly(coeffs, r_i);
@@ -430,44 +433,40 @@ test "interpolate recovers quadratic polynomial" {
 }
 
 test "prove/verify round trip, k=1 m=1" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const tables = [_][]const Gf16{&.{ fe(3), fe(7) }};
-    const proof = try T.prove(alloc, 1, &tables);
+    var proof = try T.prove(alloc, 1, &tables);
+    defer proof.deinit(alloc);
     try std.testing.expect(proof.claimed_sum.eq(fe(3).add(fe(7))));
     try std.testing.expect(try T.verify(alloc, 1, &tables, proof));
 }
 
 test "prove/verify round trip, product of two multilinears k=2" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const t0 = [_]Gf16{ fe(1), fe(2), fe(3), fe(4) };
     const t1 = [_]Gf16{ fe(5), fe(6), fe(7), fe(8) };
     const tables = [_][]const Gf16{ &t0, &t1 };
-    const proof = try T.prove(alloc, 2, &tables);
+    var proof = try T.prove(alloc, 2, &tables);
+    defer proof.deinit(alloc);
     try std.testing.expect(try T.verify(alloc, 2, &tables, proof));
 }
 
 test "prove/verify round trip, k=3 m=1" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const t0 = [_]Gf16{ fe(5), fe(2), fe(9), fe(1), fe(3), fe(7), fe(4), fe(6) };
     const tables = [_][]const Gf16{&t0};
-    const proof = try T.prove(alloc, 3, &tables);
+    var proof = try T.prove(alloc, 3, &tables);
+    defer proof.deinit(alloc);
     try std.testing.expect(try T.verify(alloc, 3, &tables, proof));
 }
 
 test "tampered claimed sum fails verification" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const t0 = [_]Gf16{ fe(1), fe(2), fe(3), fe(4) };
     const t1 = [_]Gf16{ fe(5), fe(6), fe(7), fe(8) };
     const tables = [_][]const Gf16{ &t0, &t1 };
-    const proof = try T.prove(alloc, 2, &tables);
+    var proof = try T.prove(alloc, 2, &tables);
+    defer proof.deinit(alloc);
     const bad = T.Proof{ .claimed_sum = proof.claimed_sum.add(fe(1)), .rounds = proof.rounds };
     try std.testing.expect(!try T.verify(alloc, 2, &tables, bad));
 }
@@ -480,9 +479,7 @@ test "claimed sum equals direct hypercube product sum" {
 }
 
 test "combination sum-check round trips" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const t0 = [_]Gf16{ fe(1), fe(2), fe(3), fe(4) };
     const t1 = [_]Gf16{ fe(5), fe(6), fe(7), fe(8) };
     const t2 = [_]Gf16{ fe(3), fe(1), fe(9), fe(2) };
@@ -494,7 +491,8 @@ test "combination sum-check round trips" {
         .{ .coeff = fe(3), .indices = &.{1} },
     };
 
-    const sp = try T.proveCombination(alloc, 2, &tables, &terms, null);
+    var sp = try T.proveCombination(alloc, 2, &tables, &terms, null);
+    defer sp.deinit(alloc);
     const rr = (try T.runRounds(alloc, null, sp.claimed_sum, sp.rounds)) orelse return error.TestUnexpectedResult;
     defer alloc.free(rr.challenges);
 

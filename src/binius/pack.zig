@@ -230,9 +230,7 @@ fn randomPoint(allocator: std.mem.Allocator, comptime F: type, k: u8, seed: u64)
 }
 
 test "vanishing polynomial vanishes exactly on the low-bits subspace" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const F = Gf256;
     const k = 3;
     const N = @as(usize, 1) << @intCast(k);
@@ -249,29 +247,30 @@ test "vanishing polynomial vanishes exactly on the low-bits subspace" {
 }
 
 test "packed interpolation reproduces the MLE table on H" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const F = Gf256;
     const k = 4;
     const N = @as(usize, 1) << @intCast(k);
     const table = try randomTable(alloc, F, k, 7);
+    defer alloc.free(table);
     const g = try PackedMle(F).interpolate(alloc, k, table);
+    defer alloc.free(g);
     for (0..N) |i| {
         try std.testing.expectEqual(table[i].value, PackedMle(F).evalPoly(g, F.fromInt(i)).value);
     }
 }
 
 test "coefficient-extraction eval matches direct MLE eval at random points" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const F = Gf256;
     const k = 4;
     const table = try randomTable(alloc, F, k, 11);
+    defer alloc.free(table);
     const g = try PackedMle(F).interpolate(alloc, k, table);
+    defer alloc.free(g);
 
     const r = try randomPoint(alloc, F, k, 23);
+    defer alloc.free(r);
     const mle = Polynomial.Multilinear(F){ .evals = table };
     const direct = try mle.eval(alloc, r);
     const via_packing = try PackedMle(F).eval(alloc, k, g, r);
@@ -279,15 +278,16 @@ test "coefficient-extraction eval matches direct MLE eval at random points" {
 }
 
 test "coefficient-extraction eval agrees with the kernel identity sum" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const F = Gf16;
     const k = 3;
     const N = @as(usize, 1) << @intCast(k);
     const table = try randomTable(alloc, F, k, 5);
+    defer alloc.free(table);
     const g = try PackedMle(F).interpolate(alloc, k, table);
+    defer alloc.free(g);
     const r = try randomPoint(alloc, F, k, 31);
+    defer alloc.free(r);
 
     var sum = F.zero();
     for (0..N) |i| {
@@ -298,16 +298,17 @@ test "coefficient-extraction eval agrees with the kernel identity sum" {
 }
 
 test "packed eval round trips across k and fields (incl. non-subfield k)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     inline for (.{ Gf16, Gf256 }) |F| {
         const max_k = @as(u8, @intCast(@min(F.BITS, 6)));
         var k: u8 = 1;
         while (k <= max_k) : (k += 1) {
             const table = try randomTable(alloc, F, k, @as(u64, k) * 37);
+            defer alloc.free(table);
             const g = try PackedMle(F).interpolate(alloc, k, table);
+            defer alloc.free(g);
             const r = try randomPoint(alloc, F, k, @as(u64, k) * 91);
+            defer alloc.free(r);
             const mle = Polynomial.Multilinear(F){ .evals = table };
             const direct = try mle.eval(alloc, r);
             const via_packing = try PackedMle(F).eval(alloc, k, g, r);

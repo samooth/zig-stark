@@ -569,9 +569,7 @@ test "mul by alpha is the quadratic-step map" {
 const Sumcheck = @import("sumcheck.zig").Sumcheck;
 
 test "sum-check round trip over tower GF(16)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const F = Gf16;
     var s: u64 = 5;
     var t0: [8]F = undefined;
@@ -581,19 +579,19 @@ test "sum-check round trip over tower GF(16)" {
         t1[i] = rng(F, &s);
     }
     const tables = [_][]const F{ &t0, &t1 };
-    const proof = try Sumcheck(F).prove(alloc, 3, &tables);
+    var proof = try Sumcheck(F).prove(alloc, 3, &tables);
+    defer proof.deinit(alloc);
     try std.testing.expect(try Sumcheck(F).verify(alloc, 3, &tables, proof));
 }
 
 test "sum-check round trip over tower GF(2^32)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const F = Gf2_32;
     var s: u64 = 11;
     var t0: [4]F = undefined;
     for (0..4) |i| t0[i] = rng(F, &s);
     const tables = [_][]const F{&t0};
-    const proof = try Sumcheck(F).prove(alloc, 2, &tables);
+    var proof = try Sumcheck(F).prove(alloc, 2, &tables);
+    defer proof.deinit(alloc);
     try std.testing.expect(try Sumcheck(F).verify(alloc, 2, &tables, proof));
 }

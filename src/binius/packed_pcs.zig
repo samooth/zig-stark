@@ -69,7 +69,9 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
             t: []E,
             columns: []Column,
 
-            pub fn deinit(self: Proof, allocator: std.mem.Allocator) void {
+            /// Owns `t`, `columns`, and each column's `values`/`path`; release
+            /// with `deinit(allocator)` using the allocator passed to `proveEval`.
+            pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
                 allocator.free(self.t);
                 for (self.columns) |c| {
                     allocator.free(c.values);
@@ -455,21 +457,22 @@ fn randomPoint(allocator: std.mem.Allocator, comptime E: type, k: usize, seed: u
 }
 
 fn roundTrip(comptime F: type, comptime E: type, params: PackedPcs(F, E).Params, seed: u64) !void {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const n: usize = @as(usize, 1) << @intCast(params.k());
     const table = try randomTable(alloc, F, n, seed);
+    defer alloc.free(table);
     const r = try randomPoint(alloc, E, params.k(), seed + 1);
+    defer alloc.free(r);
 
     const root = try PackedPcs(F, E).rootOf(alloc, params, table);
-    const proof = try PackedPcs(F, E).proveEval(alloc, params, table, r);
+    var proof = try PackedPcs(F, E).proveEval(alloc, params, table, r);
     defer proof.deinit(alloc);
     try std.testing.expect(try PackedPcs(F, E).verifyEval(alloc, params, root, r, proof));
 
     // The packed eval equals the direct multilinear evaluation of the table.
     const lifted = try alloc.alloc(E, n);
+    defer alloc.free(lifted);
     for (table, 0..) |v, i| lifted[i] = if (F == E) v else E.embed(F.LEVEL, v);
     const direct = try (Polynomial.Multilinear(E){ .evals = lifted }).eval(alloc, r);
     try std.testing.expectEqual(proof.value.value, direct.value);
@@ -506,9 +509,7 @@ test "packed pcs round trips in the extension field (F=Gf16, E=Gf2^128)" {
 }
 
 test "packed pcs rejects tampered row combination t" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const params = PackedPcs(Gf16, Gf16).Params{
         .k1 = 2,
         .k2 = 2,
@@ -517,7 +518,9 @@ test "packed pcs rejects tampered row combination t" {
     };
     const n: usize = @as(usize, 1) << @intCast(params.k());
     const table = try randomTable(alloc, Gf16, n, 11);
+    defer alloc.free(table);
     const r = try randomPoint(alloc, Gf16, params.k(), 12);
+    defer alloc.free(r);
 
     const root = try PackedPcs(Gf16, Gf16).rootOf(alloc, params, table);
     var proof = try PackedPcs(Gf16, Gf16).proveEval(alloc, params, table, r);
@@ -529,9 +532,7 @@ test "packed pcs rejects tampered row combination t" {
 }
 
 test "packed pcs rejects wrong claimed value" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const params = PackedPcs(Gf16, Gf16).Params{
         .k1 = 2,
         .k2 = 2,
@@ -540,7 +541,9 @@ test "packed pcs rejects wrong claimed value" {
     };
     const n: usize = @as(usize, 1) << @intCast(params.k());
     const table = try randomTable(alloc, Gf16, n, 21);
+    defer alloc.free(table);
     const r = try randomPoint(alloc, Gf16, params.k(), 22);
+    defer alloc.free(r);
 
     const root = try PackedPcs(Gf16, Gf16).rootOf(alloc, params, table);
     var proof = try PackedPcs(Gf16, Gf16).proveEval(alloc, params, table, r);
@@ -551,9 +554,7 @@ test "packed pcs rejects wrong claimed value" {
 }
 
 test "packed pcs rejects tampered opened column value" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const params = PackedPcs(Gf16, Gf16).Params{
         .k1 = 2,
         .k2 = 2,
@@ -562,7 +563,9 @@ test "packed pcs rejects tampered opened column value" {
     };
     const n: usize = @as(usize, 1) << @intCast(params.k());
     const table = try randomTable(alloc, Gf16, n, 31);
+    defer alloc.free(table);
     const r = try randomPoint(alloc, Gf16, params.k(), 32);
+    defer alloc.free(r);
 
     const root = try PackedPcs(Gf16, Gf16).rootOf(alloc, params, table);
     var proof = try PackedPcs(Gf16, Gf16).proveEval(alloc, params, table, r);
@@ -573,9 +576,7 @@ test "packed pcs rejects tampered opened column value" {
 }
 
 test "packed pcs rejects wrong commitment root" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const params = PackedPcs(Gf16, Gf16).Params{
         .k1 = 2,
         .k2 = 2,
@@ -584,13 +585,16 @@ test "packed pcs rejects wrong commitment root" {
     };
     const n: usize = @as(usize, 1) << @intCast(params.k());
     const table = try randomTable(alloc, Gf16, n, 41);
+    defer alloc.free(table);
     const r = try randomPoint(alloc, Gf16, params.k(), 42);
+    defer alloc.free(r);
 
-    var other = try randomTable(alloc, Gf16, n, 43);
+    const other = try randomTable(alloc, Gf16, n, 43);
+    defer alloc.free(other);
     other[0] = other[0].add(Gf16.one());
     const wrong_root = try PackedPcs(Gf16, Gf16).rootOf(alloc, params, other);
 
-    const proof = try PackedPcs(Gf16, Gf16).proveEval(alloc, params, table, r);
+    var proof = try PackedPcs(Gf16, Gf16).proveEval(alloc, params, table, r);
     defer proof.deinit(alloc);
     try std.testing.expect(!try PackedPcs(Gf16, Gf16).verifyEval(alloc, params, wrong_root, r, proof));
 }

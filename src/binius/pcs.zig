@@ -373,9 +373,7 @@ test "kernelTables match kernelValue on boolean points" {
 }
 
 test "mle evaluation round trips for k=1..4" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     inline for (.{ 1, 2, 3, 4 }) |k| {
         const n = @as(usize, 1) << @intCast(k);
         var table: [16]Gf16 = undefined;
@@ -384,21 +382,21 @@ test "mle evaluation round trips for k=1..4" {
         var r: [4]Gf16 = undefined;
         for (0..k) |j| r[j] = fe((j * 3 + 5) % 16);
 
-        const proof = try P.proveEval(alloc, k, table[0..n], r[0..k]);
+        var proof = try P.proveEval(alloc, k, table[0..n], r[0..k]);
+        defer proof.deinit(alloc);
         try std.testing.expect(try P.verifyEval(alloc, k, table[0..n], r[0..k], proof));
     }
 }
 
 test "tampered value or claimed sum fails verification" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const k = 3;
     var table: [8]Gf16 = undefined;
     for (0..8) |i| table[i] = fe((i * 7 + 1) % 16);
     const r = [_]Gf16{ fe(3), fe(7), fe(1) };
 
-    const proof = try P.proveEval(alloc, k, &table, &r);
+    var proof = try P.proveEval(alloc, k, &table, &r);
+    defer proof.deinit(alloc);
     try std.testing.expect(try P.verifyEval(alloc, k, &table, &r, proof));
 
     const bad_value = P.Proof{ .value = proof.value.add(fe(1)), .sumcheck = proof.sumcheck };
@@ -412,15 +410,14 @@ test "tampered value or claimed sum fails verification" {
 }
 
 test "tampered table fails verification" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const k = 3;
     var table: [8]Gf16 = undefined;
     for (0..8) |i| table[i] = fe((i * 7 + 1) % 16);
     const r = [_]Gf16{ fe(3), fe(7), fe(1) };
 
-    const proof = try P.proveEval(alloc, k, &table, &r);
+    var proof = try P.proveEval(alloc, k, &table, &r);
+    defer proof.deinit(alloc);
 
     var other: [8]Gf16 = table;
     other[4] = other[4].add(fe(1));
@@ -428,9 +425,7 @@ test "tampered table fails verification" {
 }
 
 test "extension mle evaluation round trips for k=1..4" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     inline for (.{ 1, 2, 3, 4 }) |k| {
         const n = @as(usize, 1) << @intCast(k);
         var table: [16]Tg16 = undefined;
@@ -439,40 +434,40 @@ test "extension mle evaluation round trips for k=1..4" {
         var r: [4]Gf2_128 = undefined;
         for (0..k) |j| r[j] = ee((j * 3 + 5) % 16);
 
-        const proof = try Pe.proveEval(alloc, k, table[0..n], r[0..k]);
+        var proof = try Pe.proveEval(alloc, k, table[0..n], r[0..k]);
+        defer proof.deinit(alloc);
         try std.testing.expect(try Pe.verifyEval(alloc, k, table[0..n], r[0..k], proof));
     }
 }
 
 test "extension eval agrees with plain eval on embedded base points" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const k = 3;
     var table: [8]Tg16 = undefined;
     for (0..8) |i| table[i] = te((i * 7 + 1) % 16);
 
     // r restricted to the base subfield
     const r = [_]Tg16{ te(3), te(7), te(1) };
-    const plain = try Pg.proveEval(alloc, k, &table, &r);
+    var plain = try Pg.proveEval(alloc, k, &table, &r);
+    defer plain.deinit(alloc);
 
     var re: [3]Gf2_128 = undefined;
     for (0..k) |j| re[j] = ee(r[j].value);
-    const ext = try Pe.proveEval(alloc, k, &table, &re);
+    var ext = try Pe.proveEval(alloc, k, &table, &re);
+    defer ext.deinit(alloc);
 
     try std.testing.expectEqual(plain.value.value, ext.value.value);
 }
 
 test "extension tampered value fails verification" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const k = 3;
     var table: [8]Tg16 = undefined;
     for (0..8) |i| table[i] = te((i * 7 + 1) % 16);
     const r = [_]Gf2_128{ ee(3), ee(7), ee(1) };
 
-    const proof = try Pe.proveEval(alloc, k, &table, &r);
+    var proof = try Pe.proveEval(alloc, k, &table, &r);
+    defer proof.deinit(alloc);
     try std.testing.expect(try Pe.verifyEval(alloc, k, &table, &r, proof));
 
     const bad_value = Pe.Proof{ .value = proof.value.add(ee(1)), .sumcheck = proof.sumcheck };
@@ -480,38 +475,38 @@ test "extension tampered value fails verification" {
 }
 
 test "committed pcs round trips for k=1..4 against the root" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     inline for (.{ 1, 2, 3, 4 }) |k| {
         const n = @as(usize, 1) << @intCast(k);
         var table: [16]Gf16 = undefined;
         for (0..n) |i| table[i] = fe((i * 9 + k * 5) % 16);
 
         var tree = try CP.commit(alloc, table[0..n]);
+        defer tree.deinit();
         const root = tree.root();
 
         var r: [4]Gf16 = undefined;
         for (0..k) |j| r[j] = fe((j * 11 + 2) % 16);
 
-        const proof = try CP.proveEval(alloc, k, table[0..n], r[0..k]);
+        var proof = try CP.proveEval(alloc, k, table[0..n], r[0..k]);
+        defer proof.deinit(alloc);
         try std.testing.expect(try CP.verifyEval(alloc, root, k, r[0..k], proof));
     }
 }
 
 test "committed pcs rejects wrong value, wrong root, tampered entries" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const k = 3;
     var table: [8]Gf16 = undefined;
     for (0..8) |i| table[i] = fe((i * 9 + 2) % 16);
     const r = [_]Gf16{ fe(3), fe(7), fe(1) };
 
     var tree = try CP.commit(alloc, &table);
+    defer tree.deinit();
     const root = tree.root();
 
-    const proof = try CP.proveEval(alloc, k, &table, &r);
+    var proof = try CP.proveEval(alloc, k, &table, &r);
+    defer proof.deinit(alloc);
     try std.testing.expect(try CP.verifyEval(alloc, root, k, &r, proof));
 
     // wrong claimed value
@@ -521,7 +516,8 @@ test "committed pcs rejects wrong value, wrong root, tampered entries" {
     // wrong root (different table committed)
     var other: [8]Gf16 = table;
     other[3] = other[3].add(fe(1));
-    const other_tree = try CP.commit(alloc, &other);
+    var other_tree = try CP.commit(alloc, &other);
+    defer other_tree.deinit();
     try std.testing.expect(!try CP.verifyEval(alloc, other_tree.root(), k, &r, proof));
 
     // tampered entry that fails the merkle opening
@@ -529,25 +525,26 @@ test "committed pcs rejects wrong value, wrong root, tampered entries" {
     const forged_entries = try alloc.dupe(Gf16, proof.entries);
     forged_entries[5] = forged_entries[5].add(fe(1));
     forged.entries = forged_entries;
+    defer alloc.free(forged_entries);
     try std.testing.expect(!try CP.verifyEval(alloc, root, k, &r, forged));
 }
 
 test "extension committed pcs round trips for k=1..4" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     inline for (.{ 1, 2, 3, 4 }) |k| {
         const n = @as(usize, 1) << @intCast(k);
         var table: [16]Tg16 = undefined;
         for (0..n) |i| table[i] = te((i * 9 + k * 5) % 16);
 
         var tree = try CPe.commit(alloc, table[0..n]);
+        defer tree.deinit();
         const root = tree.root();
 
         var r: [4]Gf2_128 = undefined;
         for (0..k) |j| r[j] = ee((j * 11 + 2) % 16);
 
-        const proof = try CPe.proveEval(alloc, k, table[0..n], r[0..k]);
+        var proof = try CPe.proveEval(alloc, k, table[0..n], r[0..k]);
+        defer proof.deinit(alloc);
         try std.testing.expect(try CPe.verifyEval(alloc, root, k, r[0..k], proof));
     }
 }

@@ -260,3 +260,32 @@ of `F`, `Z_H' ≡ 1` so `d = 1`.
 | Committed PCS eval | `pcs.zig` (`CommittedMlePcs`, `MlePcs`) |
 | FRI lockstep fold + final check | `fripcs.zig:464` (`verifyEval`), `fripcs.zig:510-516` |
 | Packing identity / eval | `pack.zig:8-26`, `packed_pcs.zig:29` |
+
+## 8. Memory model (caller-deinit convention)
+
+The stack follows a single ownership rule: **whoever allocates owns and
+releases**, so the caller is responsible for freeing every object handed back by
+the API. Concretely:
+
+- **Every public `Proof` type owns its heap memory** and exposes
+  `deinit(self: *Proof, allocator) void`. Call it with the *same* allocator that
+  was passed to `prove`/`proveEval`/`commit`. Proofs are plain value types, so
+  the binding holding one must be declared `var` for the deferred `deinit` to
+  take a mutable pointer:
+  `var proof = try S.prove(alloc, ...); defer proof.deinit(alloc);`
+- **`MerkleTree` carries its own allocator** and exposes `deinit(self: *MerkleTree)`,
+  e.g. `var tree = try CP.commit(alloc, table); defer tree.deinit();`.
+- **Inputs are always borrowed.** Tables, roots, traces, public inputs, pins and
+  constraints passed *into* the API are never freed or mutated by the library.
+  Slices copied into a proof (e.g. `CommittedMlePcs.Proof.entries`) borrow the
+  prover's table and must outlive the proof.
+- **`verify` never modifies or frees proof memory.** It may allocate its own
+  temporaries (challenges, query lists) which it frees before returning, on both
+  the accept and reject paths. Rejected proofs therefore must still be released
+  by the caller with `deinit`.
+- Helper builders return owned memory: `kernelTables`, `deriveChallenges`
+  (`tau`/`alphas`), `liftTables`, FRI `commit`, PCS `rootOf` — the caller frees
+  each slice and (for `[][]T` results) each inner slice.
+- All library tests run against `std.testing.allocator` so every test is
+  leak-checked; the suite will fail on any un-freed allocation.
+

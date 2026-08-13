@@ -289,6 +289,9 @@ pub fn FriPcs(
             final_folded_value: E,
             queries: []Query,
 
+            /// Owns `rounds`, `layer_roots`, `queries`, and each query's layers
+            /// and paths; release with `deinit(allocator)` using the allocator
+            /// passed to `proveEval`.
             pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
                 for (self.queries) |q| {
                     for (q.layers) |lp| allocator.free(lp.path);
@@ -619,24 +622,28 @@ fn randomPoint(allocator: std.mem.Allocator, comptime F: type, k: u8, seed: u64)
 }
 
 fn testFoldIdentity(comptime F: type, k: u8, log_blowup: u8, seed: u64) !void {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = std.testing.allocator;
 
     const msg = try randomTable(a, F, k, seed);
+    defer a.free(msg);
     const r = try randomPoint(a, F, k, seed + 1);
+    defer a.free(r);
 
     const D = k + log_blowup;
     var ntt = try Ntt(F).init(a, D);
+    defer ntt.deinit();
     const code = try ntt.encode(a, msg, log_blowup);
+    defer a.free(code);
 
     // Fold all k rounds (the message rounds).
     var cur = try a.dupe(F, code);
     for (0..k) |rnd| {
         const next = try a.alloc(F, cur.len >> 1);
         ntt.foldCode(cur, @intCast(rnd), r[rnd], next);
+        a.free(cur);
         cur = next;
     }
+    defer a.free(cur);
 
     // Reference: Σ_i msg[i]·eq_r(i).
     var expect = F.zero();
@@ -662,12 +669,12 @@ test "NTT fold identity (rate 4): fold(code, r) == Σ v·eq_r" {
 }
 
 test "fold_lo chain == Σ t·eq_r (table fold)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = std.testing.allocator;
     const k = 4;
     const t = try randomTable(a, Gf16, k, 77);
+    defer a.free(t);
     const r = try randomPoint(a, Gf16, k, 78);
+    defer a.free(r);
     var cur = try a.dupe(Gf16, t);
     var next = try a.alloc(Gf16, t.len >> 1);
     for (0..k) |rnd| {
@@ -676,6 +683,8 @@ test "fold_lo chain == Σ t·eq_r (table fold)" {
         cur = next;
         next = tmp;
     }
+    defer a.free(cur);
+    defer a.free(next);
     var expect = Gf16.zero();
     for (t, 0..) |v, i| expect = expect.add(v.mul(eqEval(Gf16, r, i)));
     try std.testing.expectEqual(expect, cur[0]);
@@ -689,12 +698,12 @@ fn randomPointE(allocator: std.mem.Allocator, comptime E: type, k: u8, seed: u64
 }
 
 fn testFriRoundTrip(comptime F: type, comptime E: type, comptime k: u8, comptime log_blowup: u8, comptime num_queries: usize, seed: u64) !void {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = std.testing.allocator;
 
     const table = try randomTable(a, F, k, seed);
+    defer a.free(table);
     const r = try randomPointE(a, E, k, seed + 7);
+    defer a.free(r);
     const n = @as(usize, 1) << @intCast(k);
 
     var expect = E.zero();
@@ -728,9 +737,7 @@ test "FRI PCS: honest round-trips (extension field)" {
 }
 
 test "FRI PCS: rejects tampered proofs" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
+    const a = std.testing.allocator;
 
     const F = Gf16;
     const E = Gf16;
@@ -739,7 +746,9 @@ test "FRI PCS: rejects tampered proofs" {
     const P = FriPcs(F, E, log_blowup, 2);
 
     const table = try randomTable(a, F, k, 500);
+    defer a.free(table);
     const r = try randomPointE(a, E, k, 501);
+    defer a.free(r);
 
     var tree = try P.commit(std.testing.allocator, table);
     defer tree.deinit();

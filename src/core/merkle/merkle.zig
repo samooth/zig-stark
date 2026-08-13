@@ -4,6 +4,9 @@ const Hash = @import("../hash/hash.zig").Hash;
 /// Binary Merkle tree over a power-of-two number of leaves.
 /// Leaves are `Hash.Digest` values (produced by the caller, typically from
 /// field-element hashing); internal nodes are `hash2(left, right)`.
+///
+/// Owns its memory and stores the allocator it was built with; release with
+/// `deinit()` (no allocator argument).
 pub const MerkleTree = struct {
     allocator: std.mem.Allocator,
     leaves: []Hash.Digest,

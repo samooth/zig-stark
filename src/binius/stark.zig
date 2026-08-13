@@ -125,6 +125,8 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
             /// challenge point, in first-occurrence order of `factors`.
             evals: []EvalProof,
 
+            /// Owns `sumcheck` and `evals` (and each nested PCS proof); release
+            /// with `deinit(allocator)` using the allocator passed to `prove`.
             pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
                 self.sumcheck.deinit(allocator);
                 for (self.evals) |*e| e.pcs.deinit(allocator);
@@ -376,6 +378,7 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
                     pin_tables[pfilled] = pt[j];
                     pfilled += 1;
                 }
+                allocator.free(pt);
             }
             defer {
                 for (0..pfilled) |i| allocator.free(pin_tables[i]);
@@ -565,9 +568,7 @@ fn fe(x: u128) Gf16 {
 }
 
 test "booleanness constraint round trip" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const k = 3;
     var w: [8]Gf16 = undefined;
@@ -583,20 +584,20 @@ test "booleanness constraint round trip" {
     }};
 
     const columns = [_][]const Gf16{&w};
-    const proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try S.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
 }
 
 test "non-boolean witness is rejected" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf256, Gf256, 16);
 
     // w ≡ 2 is constant, so the zero-check sum R = w + w·w = 2 + 4 = 6 is a
@@ -614,20 +615,20 @@ test "non-boolean witness is rejected" {
         .terms = &booleanness,
     }};
     const columns = [_][]const Gf256{&w};
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(!try SF.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
 }
 
 test "multiplication relation h = f·g" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const k = 3;
     var f: [8]Gf16 = undefined;
@@ -648,13 +649,17 @@ test "multiplication relation h = f·g" {
         .terms = &rel,
     }};
     const columns = [_][]const Gf16{ &f, &g, &h };
-    const proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [3]CoreHash.Hash.Digest = undefined;
     {
         var tf = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &f);
+        defer tf.deinit();
         var tg = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &g);
+        defer tg.deinit();
         var th = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &h);
+        defer th.deinit();
         roots[0] = tf.root();
         roots[1] = tg.root();
         roots[2] = th.root();
@@ -663,9 +668,7 @@ test "multiplication relation h = f·g" {
 }
 
 test "wrong product is rejected" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf256, Gf256, 16);
 
     // h ≡ 1 while f = g = 0 makes R = h + f·g ≡ 1, a non-zero constant, so
@@ -688,13 +691,17 @@ test "wrong product is rejected" {
         .terms = &rel,
     }};
     const columns = [_][]const Gf256{ &f, &g, &h };
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [3]CoreHash.Hash.Digest = undefined;
     {
         var tf = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &f);
+        defer tf.deinit();
         var tg = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &g);
+        defer tg.deinit();
         var th = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &h);
+        defer th.deinit();
         roots[0] = tf.root();
         roots[1] = tg.root();
         roots[2] = th.root();
@@ -703,9 +710,7 @@ test "wrong product is rejected" {
 }
 
 test "multiple constraints in one proof" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const k = 3;
     var w: [8]Gf16 = undefined;
@@ -732,14 +737,19 @@ test "multiple constraints in one proof" {
         .{ .terms = &prod_terms },
     };
     const columns = [_][]const Gf16{ &w, &f, &g, &h };
-    const proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [4]CoreHash.Hash.Digest = undefined;
     {
         var tw = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &w);
+        defer tw.deinit();
         var tf = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &f);
+        defer tf.deinit();
         var tg = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &g);
+        defer tg.deinit();
         var th = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &h);
+        defer th.deinit();
         roots[0] = tw.root();
         roots[1] = tf.root();
         roots[2] = tg.root();
@@ -749,9 +759,7 @@ test "multiple constraints in one proof" {
 }
 
 test "tampered root is rejected" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const k = 3;
     var w: [8]Gf16 = undefined;
@@ -765,7 +773,8 @@ test "tampered root is rejected" {
         .terms = &booleanness,
     }};
     const columns = [_][]const Gf16{&w};
-    const proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     // Flip one witness bit and commit the tampered column.
     var bad: [8]Gf16 = w;
@@ -773,15 +782,14 @@ test "tampered root is rejected" {
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &bad);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(!try S.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
 }
 
 test "batched constraints open each distinct column once" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const k = 3;
     var w: [8]Gf16 = undefined;
@@ -814,14 +822,18 @@ test "batched constraints open each distinct column once" {
         .{ .terms = &c2 },
     };
     const columns = [_][]const Gf16{ &w, &f, &g };
-    const proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try S.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
     try std.testing.expectEqual(@as(usize, 3), proof.evals.len);
 
     var roots: [3]CoreHash.Hash.Digest = undefined;
     {
         var tw = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &w);
+        defer tw.deinit();
         var tf = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &f);
+        defer tf.deinit();
         var tg = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf16).commit(alloc, &g);
+        defer tg.deinit();
         roots[0] = tw.root();
         roots[1] = tf.root();
         roots[2] = tg.root();
@@ -830,9 +842,7 @@ test "batched constraints open each distinct column once" {
 }
 
 test "stark runs over tower GF(256)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf256, Gf256, 16);
 
     const k = 2;
@@ -847,11 +857,13 @@ test "stark runs over tower GF(256)" {
         .terms = &bool_terms,
     }};
     const columns = [_][]const Gf256{&w};
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SF.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
@@ -877,9 +889,7 @@ test "challenges span the full GF(256) field" {
 }
 
 test "public inputs are bound by the Fiat-Shamir transcript" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf256, Gf256, 16);
 
     const k = 3;
@@ -896,11 +906,13 @@ test "public inputs are bound by the Fiat-Shamir transcript" {
     const columns = [_][]const Gf256{&w};
     const pub_in = "pinned statement: k=3";
 
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, pub_in);
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, pub_in);
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     // The same public input verifies...
@@ -911,9 +923,7 @@ test "public inputs are bound by the Fiat-Shamir transcript" {
 }
 
 test "boundary pins round trip" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf256, Gf256, 16);
 
     const k = 3;
@@ -936,20 +946,20 @@ test "boundary pins round trip" {
         .{ .col = 0, .point = 6, .value = w[6] },
         .{ .col = 0, .point = 6, .value = w[6] },
     };
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SF.verify(alloc, k, &roots, &constraints, &pins, proof, ""));
 }
 
 test "wrong boundary pin value is rejected" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf256, Gf256, 16);
 
     const k = 3;
@@ -969,11 +979,13 @@ test "wrong boundary pin value is rejected" {
         .{ .col = 0, .point = 1, .value = w[1] },
         .{ .col = 0, .point = 6, .value = w[6] },
     };
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SF.verify(alloc, k, &roots, &constraints, &pins, proof, ""));
@@ -988,9 +1000,7 @@ test "wrong boundary pin value is rejected" {
 }
 
 test "pinned constraint proves a boundary evaluation" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf256, Gf256, 16);
 
     // The witness is random (no constraints at all); the only thing a verifier
@@ -1006,11 +1016,13 @@ test "pinned constraint proves a boundary evaluation" {
         .{ .col = 0, .point = 3, .value = w[3] },
         .{ .col = 0, .point = 5, .value = w[5] },
     };
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SF.verify(alloc, k, &roots, &constraints, &pins, proof, ""));
@@ -1022,17 +1034,17 @@ test "pinned constraint proves a boundary evaluation" {
     var bad_roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf256, Gf256).commit(alloc, &bad);
+        defer tree.deinit();
         bad_roots[0] = tree.root();
     }
     const bad_cols = [_][]const Gf256{&bad};
-    const forged = try SF.prove(alloc, k, &bad_cols, &constraints, &pins, "");
+    var forged = try SF.prove(alloc, k, &bad_cols, &constraints, &pins, "");
+    defer forged.deinit(alloc);
     try std.testing.expect(!try SF.verify(alloc, k, &bad_roots, &constraints, &pins, forged, ""));
 }
 
 test "stark runs over the Script field GF(16)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(ScriptGf16, ScriptGf16, 16);
 
     const k = 2;
@@ -1047,20 +1059,20 @@ test "stark runs over the Script field GF(16)" {
         .terms = &bool_terms,
     }};
     const columns = [_][]const ScriptGf16{&w};
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(ScriptGf16, ScriptGf16).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SF.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
 }
 
 test "stark with boundary pins over the GF(2^128) extension" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
     const SF = BiniusStark(Gf16, Gf2_128, 16);
 
     const k = 3;
@@ -1079,11 +1091,13 @@ test "stark with boundary pins over the GF(2^128) extension" {
         .{ .col = 0, .point = 1, .value = w[1] },
         .{ .col = 0, .point = 6, .value = w[6] },
     };
-    const proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    var proof = try SF.prove(alloc, k, &columns, &constraints, &pins, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try @import("pcs.zig").CommittedMlePcs(Gf16, Gf2_128).commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SF.verify(alloc, k, &roots, &constraints, &pins, proof, ""));
@@ -1104,9 +1118,7 @@ test "stark with boundary pins over the GF(2^128) extension" {
 const PcsPacked = @import("packed_pcs.zig");
 
 test "packed PCS mode: booleanness round trip over Gf16" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
     const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
@@ -1124,20 +1136,20 @@ test "packed PCS mode: booleanness round trip over Gf16" {
     }};
 
     const columns = [_][]const Gf16{&w};
-    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try Pcs.commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
 }
 
 test "packed PCS mode: multiplication relation h = f·g over Gf256 at k=6" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf256, Gf256, .{ .k2 = 3, .log_blowup = 2, .num_queries = 6 });
     const SP = BiniusStarkWith(Gf256, Gf256, 16, Pcs);
@@ -1162,13 +1174,17 @@ test "packed PCS mode: multiplication relation h = f·g over Gf256 at k=6" {
     }};
 
     const columns = [_][]const Gf256{ &f, &g, &h };
-    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [3]CoreHash.Hash.Digest = undefined;
     {
         var tf = try Pcs.commit(alloc, &f);
+        defer tf.deinit();
         var tg = try Pcs.commit(alloc, &g);
+        defer tg.deinit();
         var th = try Pcs.commit(alloc, &h);
+        defer th.deinit();
         roots[0] = tf.root();
         roots[1] = tg.root();
         roots[2] = th.root();
@@ -1177,9 +1193,7 @@ test "packed PCS mode: multiplication relation h = f·g over Gf256 at k=6" {
 }
 
 test "packed PCS mode: round trip in the extension field (F=Gf16, E=Gf2^128)" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf2_128, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
     const SP = BiniusStarkWith(Gf16, Gf2_128, 16, Pcs);
@@ -1197,20 +1211,20 @@ test "packed PCS mode: round trip in the extension field (F=Gf16, E=Gf2^128)" {
     }};
 
     const columns = [_][]const Gf16{&w};
-    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try Pcs.commit(alloc, &w);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
 }
 
 test "packed PCS mode: wrong product is rejected" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
     const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
@@ -1238,13 +1252,17 @@ test "packed PCS mode: wrong product is rejected" {
     }};
 
     const columns = [_][]const Gf16{ &f, &g, &hp };
-    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     var roots: [3]CoreHash.Hash.Digest = undefined;
     {
         var tf = try Pcs.commit(alloc, &f);
+        defer tf.deinit();
         var tg = try Pcs.commit(alloc, &g);
+        defer tg.deinit();
         var th = try Pcs.commit(alloc, &hp);
+        defer th.deinit();
         roots[0] = tf.root();
         roots[1] = tg.root();
         roots[2] = th.root();
@@ -1253,9 +1271,7 @@ test "packed PCS mode: wrong product is rejected" {
 }
 
 test "packed PCS mode: wrong commitment root is rejected" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
+    const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
     const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
@@ -1275,13 +1291,15 @@ test "packed PCS mode: wrong commitment root is rejected" {
     }};
 
     const columns = [_][]const Gf16{&w};
-    const proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    var proof = try SP.prove(alloc, k, &columns, &constraints, &.{}, "");
+    defer proof.deinit(alloc);
 
     // Commit a different table: the Merkle opening of the opened column can no
     // longer match, so the packed PCS evaluation check fails.
     var roots: [1]CoreHash.Hash.Digest = undefined;
     {
         var tree = try Pcs.commit(alloc, &wrong);
+        defer tree.deinit();
         roots[0] = tree.root();
     }
     try std.testing.expect(!try SP.verify(alloc, k, &roots, &constraints, &.{}, proof, ""));
