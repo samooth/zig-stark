@@ -21,7 +21,7 @@ fn now() i128 {
 /// makes that O(2^k) blow-up explicit.
 fn runField(comptime F: type, comptime E: type, alloc: std.mem.Allocator, rnd: std.Random) !void {
     const Adder = binius.adder.Adder(F, E);
-    const Stark = binius.stark.BiniusStark(F, E, Adder.num_columns);
+    const Stark = binius.stark.BiniusStark(F, E);
     const CommittedPcs = binius.pcs.CommittedMlePcs(F, E);
 
     std.debug.print("\nfield {s} (SIZE={d}), extension {s} (SIZE={d})\n", .{ @typeName(F), F.SIZE, @typeName(E), E.SIZE });

@@ -49,8 +49,8 @@ const Channel = @import("../core/channel/channel.zig").Channel;
 /// zero-check point τ, the combination coefficients α_t, and seeds the inner
 /// sum-check transcript, so all randomness binds to the public statement and
 /// the committed witness.
-pub fn BiniusStark(comptime F: type, comptime E: type, comptime max_cols: usize) type {
-    return StarkInner(F, E, max_cols, PcsMod.CommittedMlePcs(F, E));
+pub fn BiniusStark(comptime F: type, comptime E: type) type {
+    return StarkInner(F, E, PcsMod.CommittedMlePcs(F, E));
 }
 
 /// Same zero-check STARK, but with the sub-linear polylog FRI-Binius PCS
@@ -60,11 +60,10 @@ pub fn BiniusStark(comptime F: type, comptime E: type, comptime max_cols: usize)
 pub fn BiniusStarkFri(
     comptime F: type,
     comptime E: type,
-    comptime max_cols: usize,
     comptime log_blowup: u8,
     comptime num_queries: usize,
 ) type {
-    return StarkInner(F, E, max_cols, FriPcsMod.FriPcsStark(F, E, log_blowup, num_queries));
+    return StarkInner(F, E, FriPcsMod.FriPcsStark(F, E, log_blowup, num_queries));
 }
 
 /// Same zero-check STARK, but with a caller-chosen committed-MLE PCS. The PCS
@@ -73,11 +72,11 @@ pub fn BiniusStarkFri(
 /// `verifyEval(allocator, root, k, r, proof) -> bool`. `CommittedMlePcs` opens
 /// all 2^k entries; `PackedPcsStark` (from `packed_pcs.zig`) opens only the
 /// packed rows and a few sampled columns, giving sub-linear proofs.
-pub fn BiniusStarkWith(comptime F: type, comptime E: type, comptime max_cols: usize, comptime CP: type) type {
-    return StarkInner(F, E, max_cols, CP);
+pub fn BiniusStarkWith(comptime F: type, comptime E: type, comptime CP: type) type {
+    return StarkInner(F, E, CP);
 }
 
-fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comptime CP: type) type {
+fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
     return struct {
         const SC = SumcheckMod.Sumcheck(E);
         const M = PcsMod.MlePcs(F, E);
@@ -85,8 +84,6 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
 
         /// Fiat-Shamir domain separator for this protocol.
         const domain = "zig-stark:binius-stark";
-
-        pub const MaxColumns = max_cols;
 
         /// One monomial c·∏_{f∈factors} w_f(x); `factors` may repeat a column
         /// index to encode powers (w·w = w²).
@@ -151,7 +148,6 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
             public_inputs: []const u8,
             out_seed: *[32]u8,
         ) !struct { tau: []E, alphas: []E } {
-            std.debug.assert(roots.len <= max_cols);
             var ch = Channel.init(domain);
             ch.absorbBytes(public_inputs);
             var ubuf: [8]u8 = undefined;
@@ -307,14 +303,14 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
         ) !Proof {
             const m = columns.len;
             const n = @as(usize, 1) << @intCast(k);
-            std.debug.assert(m <= max_cols);
             for (columns) |c| std.debug.assert(c.len == n);
             for (pins) |pin| {
                 std.debug.assert(pin.col < m);
                 std.debug.assert(pin.point < n);
             }
 
-            var roots: [max_cols]Hash.Digest = undefined;
+            const roots = try allocator.alloc(Hash.Digest, m);
+            defer allocator.free(roots);
             for (0..m) |j| {
                 var tree = try CP.commit(allocator, columns[j]);
                 defer tree.deinit();
@@ -408,8 +404,11 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
 
             // Distinct factor columns across all constraints, in
             // first-occurrence order; open each once at the challenge point.
-            var seen: [MaxColumns]bool = [_]bool{false} ** MaxColumns;
-            var distinct: [MaxColumns]usize = undefined;
+            const seen = try allocator.alloc(bool, m);
+            defer allocator.free(seen);
+            @memset(seen, false);
+            const distinct = try allocator.alloc(usize, m);
+            defer allocator.free(distinct);
             var count: usize = 0;
             for (combined) |con| {
                 for (con.terms) |mono| {
@@ -496,14 +495,16 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
 
             // Distinct witness factor columns, first-occurrence order; pin-kernel
             // slots (≥ m) are public tables and are never opened.
-            var seen: [MaxColumns]bool = [_]bool{false} ** MaxColumns;
-            var distinct: [MaxColumns]usize = undefined;
+            const seen = try allocator.alloc(bool, m);
+            defer allocator.free(seen);
+            @memset(seen, false);
+            const distinct = try allocator.alloc(usize, m);
+            defer allocator.free(distinct);
             var count: usize = 0;
             for (combined) |con| {
                 for (con.terms) |mono| {
                     for (mono.factors) |fidx| {
                         if (fidx >= m) continue;
-                        if (fidx >= max_cols) return false;
                         if (seen[fidx]) continue;
                         seen[fidx] = true;
                         distinct[count] = fidx;
@@ -513,7 +514,8 @@ fn StarkInner(comptime F: type, comptime E: type, comptime max_cols: usize, comp
             }
             if (proof.evals.len != count) return false;
 
-            var value_of: [MaxColumns]E = undefined;
+            const value_of = try allocator.alloc(E, m);
+            defer allocator.free(value_of);
             for (0..count) |l| {
                 const ok = try CP.verifyEval(allocator, roots[distinct[l]], k, rr.challenges, proof.evals[l].pcs);
                 if (!ok) return false;
@@ -561,7 +563,7 @@ const Gf256 = @import("tower.zig").Gf256;
 const TowerField = @import("tower.zig").TowerField;
 const Gf2_128 = TowerField(7);
 const ScriptGf16 = @import("field.zig").Gf16;
-const S = BiniusStark(Gf16, Gf16, 16);
+const S = BiniusStark(Gf16, Gf16);
 
 fn fe(x: u128) Gf16 {
     return Gf16.fromInt(x);
@@ -598,7 +600,7 @@ test "booleanness constraint round trip" {
 
 test "non-boolean witness is rejected" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf256, Gf256, 16);
+    const SF = BiniusStark(Gf256, Gf256);
 
     // w ≡ 2 is constant, so the zero-check sum R = w + w·w = 2 + 4 = 6 is a
     // non-zero constant on the hypercube. Its random combination survives any
@@ -669,7 +671,7 @@ test "multiplication relation h = f·g" {
 
 test "wrong product is rejected" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf256, Gf256, 16);
+    const SF = BiniusStark(Gf256, Gf256);
 
     // h ≡ 1 while f = g = 0 makes R = h + f·g ≡ 1, a non-zero constant, so
     // the zero-check survives any τ and rejection only needs α_0 ≠ 0.
@@ -843,7 +845,7 @@ test "batched constraints open each distinct column once" {
 
 test "stark runs over tower GF(256)" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf256, Gf256, 16);
+    const SF = BiniusStark(Gf256, Gf256);
 
     const k = 2;
     var w: [4]Gf256 = undefined;
@@ -870,7 +872,7 @@ test "stark runs over tower GF(256)" {
 }
 
 test "challenges span the full GF(256) field" {
-    var ch = Channel.init(BiniusStark(Gf256, Gf256, 16).domain);
+    var ch = Channel.init(BiniusStark(Gf256, Gf256).domain);
     ch.absorbBytes("");
     ch.absorbDigest(CoreHash.Hash.hashBytes("roots"));
 
@@ -890,7 +892,7 @@ test "challenges span the full GF(256) field" {
 
 test "public inputs are bound by the Fiat-Shamir transcript" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf256, Gf256, 16);
+    const SF = BiniusStark(Gf256, Gf256);
 
     const k = 3;
     var w: [8]Gf256 = undefined;
@@ -924,7 +926,7 @@ test "public inputs are bound by the Fiat-Shamir transcript" {
 
 test "boundary pins round trip" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf256, Gf256, 16);
+    const SF = BiniusStark(Gf256, Gf256);
 
     const k = 3;
     var w: [8]Gf256 = undefined;
@@ -960,7 +962,7 @@ test "boundary pins round trip" {
 
 test "wrong boundary pin value is rejected" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf256, Gf256, 16);
+    const SF = BiniusStark(Gf256, Gf256);
 
     const k = 3;
     var w: [8]Gf256 = undefined;
@@ -1001,7 +1003,7 @@ test "wrong boundary pin value is rejected" {
 
 test "pinned constraint proves a boundary evaluation" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf256, Gf256, 16);
+    const SF = BiniusStark(Gf256, Gf256);
 
     // The witness is random (no constraints at all); the only thing a verifier
     // learns is the pinned evaluations. An honest proof with matching pins
@@ -1045,7 +1047,7 @@ test "pinned constraint proves a boundary evaluation" {
 
 test "stark runs over the Script field GF(16)" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(ScriptGf16, ScriptGf16, 16);
+    const SF = BiniusStark(ScriptGf16, ScriptGf16);
 
     const k = 2;
     var w: [4]ScriptGf16 = undefined;
@@ -1073,7 +1075,7 @@ test "stark runs over the Script field GF(16)" {
 
 test "stark with boundary pins over the GF(2^128) extension" {
     const alloc = std.testing.allocator;
-    const SF = BiniusStark(Gf16, Gf2_128, 16);
+    const SF = BiniusStark(Gf16, Gf2_128);
 
     const k = 3;
     var w: [8]Gf16 = undefined;
@@ -1121,7 +1123,7 @@ test "packed PCS mode: booleanness round trip over Gf16" {
     const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
-    const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
+    const SP = BiniusStarkWith(Gf16, Gf16, Pcs);
 
     const k = 3;
     var w: [8]Gf16 = undefined;
@@ -1152,7 +1154,7 @@ test "packed PCS mode: multiplication relation h = f·g over Gf256 at k=6" {
     const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf256, Gf256, .{ .k2 = 3, .log_blowup = 2, .num_queries = 6 });
-    const SP = BiniusStarkWith(Gf256, Gf256, 16, Pcs);
+    const SP = BiniusStarkWith(Gf256, Gf256, Pcs);
 
     const k = 6;
     var f: [64]Gf256 = undefined;
@@ -1196,7 +1198,7 @@ test "packed PCS mode: round trip in the extension field (F=Gf16, E=Gf2^128)" {
     const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf2_128, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
-    const SP = BiniusStarkWith(Gf16, Gf2_128, 16, Pcs);
+    const SP = BiniusStarkWith(Gf16, Gf2_128, Pcs);
 
     const k = 2;
     var w: [4]Gf16 = undefined;
@@ -1227,7 +1229,7 @@ test "packed PCS mode: wrong product is rejected" {
     const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
-    const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
+    const SP = BiniusStarkWith(Gf16, Gf16, Pcs);
 
     // h' = h + 1 is not f·g; the prover's witness violates the constraint, so
     // the zero-check sum Σ (h' + f·g) = Σ 1 = 1 ≠ 0 survives any τ and the
@@ -1274,7 +1276,7 @@ test "packed PCS mode: wrong commitment root is rejected" {
     const alloc = std.testing.allocator;
 
     const Pcs = PcsPacked.PackedPcsStark(Gf16, Gf16, .{ .k2 = 1, .log_blowup = 2, .num_queries = 6 });
-    const SP = BiniusStarkWith(Gf16, Gf16, 16, Pcs);
+    const SP = BiniusStarkWith(Gf16, Gf16, Pcs);
 
     const k = 3;
     var w: [8]Gf16 = undefined;

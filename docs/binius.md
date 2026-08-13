@@ -14,7 +14,7 @@ a per-application error bound and a concrete security figure for the default
 | `E` | extension field of `F` (or `E = F`), where the soundness randomness lives |
 | `k` | MLE dimension; witness tables have `2^k` entries |
 | `{0,1}^k` | boolean hypercube, the constraint domain |
-| `m` | number of witness columns (`m ≤ max_cols`) |
+| `m` | number of witness columns |
 | `β_r(x)` | `∏_j (x_j + 1 + r_j)`, the Lagrange / Möbius kernel for the point `r` (char 2: `eq(r_j, x_j) = 1 + r_j + x_j`) |
 | `δ_p(x)` | `∏_j (x_j + 1 + p_j)` for a pinned point `p` (the same kernel evaluated at a pin) |
 | `M.lift` | the zero-cost tower embedding `F → E` (`TowerField.embed`), identity when `E = F` |
@@ -28,8 +28,8 @@ by `lift`, which copies the bit string, so the prover never re-commits.
 
 ## 2. Protocol and transcript order
 
-The STARK (`BiniusStarkWith(F, E, max_cols, CP)` / convenience
-`BiniusStarkFri(F, E, max_cols, log_blowup, num_queries)`) has three nested
+The STARK (`BiniusStarkWith(F, E, CP)` / convenience
+`BiniusStarkFri(F, E, log_blowup, num_queries)`) has three nested
 Fiat-Shamir stages.
 
 **Stage 0 — outer channel** (`stark.zig:143 deriveChallenges`, hash domain
@@ -163,7 +163,7 @@ the security bottleneck, not the field arithmetic — this is exactly the point 
 running the protocol in `E`. For `PackedPcs`, add `2^{-log_blowup·q}`, and for
 `FriPcs` add the FRI proximity term.
 
-**Why not single-field?** `BiniusStark(Gf256, Gf256, …)` replaces every
+**Why not single-field?** `BiniusStark(Gf256, Gf256)` replaces every
 `1/|E|` above by `1/|F| = 1/256 = 2^-8`; the same argument gives ≈ `2^-8` — too
 weak by itself. The size/e2e tests run single-field *only* because the proof
 structure is identical; the sound configuration is the extension pair.

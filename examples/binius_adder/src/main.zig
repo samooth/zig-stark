@@ -6,7 +6,7 @@ const Hash = zig_stark.hash.Hash;
 const F = binius.tower.Gf256;
 const E = binius.tower.Gf2_128;
 const Adder = binius.adder.Adder(F, E);
-const Stark = binius.stark.BiniusStark(F, E, Adder.num_columns);
+const Stark = binius.stark.BiniusStark(F, E);
 const CommittedPcs = binius.pcs.CommittedMlePcs(F, E);
 
 /// Monotonic clock in nanoseconds (Linux-only, matching the rest of the repo).

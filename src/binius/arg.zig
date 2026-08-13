@@ -26,24 +26,22 @@ const CoreHash = @import("../core/hash/hash.zig");
 /// hypercube sum of their products, and open the few MLE evaluations the
 /// sum-check leaves the verifier with.
 ///
-/// `BiniusArg(F, max_tables)` is the classic single-field construction;
-/// `BiniusArgWith(F, E, max_tables, CP)` runs the sum-check over the
-/// extension field `E` of the witness field `F` (lifting the tables by the
-/// zero-cost tower embedding) so the Schwartz-Zippel applications carry
-/// soundness ≈ 1/|E| even for a small witness field `F`.
-pub fn BiniusArg(comptime F: type, comptime max_tables: usize) type {
-    return BiniusArgWith(F, F, max_tables, PcsMod.CommittedMlePcs(F, F));
+/// `BiniusArg(F, E)` is the product-sum argument over the extension field `E`
+/// of the witness field `F` (lifting the tables by the zero-cost tower
+/// embedding) so the Schwartz-Zippel applications carry soundness ≈ 1/|E| even
+/// for a small witness field `F`. It commits the tables and opens every MLE
+/// evaluation at the challenge point (proof size O(m·2^k)).
+pub fn BiniusArg(comptime F: type, comptime E: type) type {
+    return BiniusArgWith(F, E, PcsMod.CommittedMlePcs(F, E));
 }
 
-/// Product-sum argument with a caller-chosen extension field `E` and
-/// committed-MLE PCS `CP` (same interface as `BiniusStarkWith`:
-/// `Proof`, `commit`, `proveEval`, `verifyEval`).
-pub fn BiniusArgWith(comptime F: type, comptime E: type, comptime max_tables: usize, comptime CP: type) type {
+/// Product-sum argument with a caller-chosen committed-MLE PCS `CP` (same
+/// interface as `BiniusStarkWith`: `Proof`, `commit`, `proveEval`,
+/// `verifyEval`). `BiniusArgFri` picks the sub-linear FRI-Binius PCS.
+pub fn BiniusArgWith(comptime F: type, comptime E: type, comptime CP: type) type {
     return struct {
         const SC = SumcheckMod.Sumcheck(E);
         const Hash = CoreHash.Hash;
-
-        pub const MaxTables = max_tables;
 
         pub const EvalProof = struct {
             value: E,
@@ -86,14 +84,12 @@ pub fn BiniusArgWith(comptime F: type, comptime E: type, comptime max_tables: us
         /// Seed the main sum-check transcript with the Merkle roots so the
         /// challenges are bound to the committed tables.
         fn seedForRoots(roots: []const Hash.Digest) [32]u8 {
-            std.debug.assert(roots.len <= MaxTables);
-            var buf: [MaxTables * 32]u8 = undefined;
-            var n: usize = 0;
-            for (roots) |root| {
-                @memcpy(buf[n..][0..32], &root);
-                n += 32;
-            }
-            return Hash.hashBytes(buf[0..n]);
+            var h = std.crypto.hash.Blake3.init(.{});
+            h.update("zig-stark:arg-seed");
+            for (roots) |root| h.update(&root);
+            var out: [32]u8 = undefined;
+            h.final(&out);
+            return out;
         }
 
         /// Prover: commit the tables, run the main sum-check over the lifted
@@ -106,9 +102,9 @@ pub fn BiniusArgWith(comptime F: type, comptime E: type, comptime max_tables: us
             const m = tables.len;
             const n = @as(usize, 1) << @intCast(k);
             for (tables) |t| std.debug.assert(t.len == n);
-            std.debug.assert(m <= MaxTables);
 
-            var roots: [MaxTables]Hash.Digest = undefined;
+            const roots = try allocator.alloc(Hash.Digest, m);
+            defer allocator.free(roots);
             for (0..m) |j| {
                 var tree = try CP.commit(allocator, tables[j]);
                 defer tree.deinit();
@@ -171,8 +167,8 @@ pub fn BiniusArgWith(comptime F: type, comptime E: type, comptime max_tables: us
 
 /// Product-sum argument with the sub-linear polylog FRI-Binius PCS
 /// (`FriPcs` from `fripcs.zig`) as the committed-MLE layer.
-pub fn BiniusArgFri(comptime F: type, comptime E: type, comptime max_tables: usize, comptime log_blowup: u8, comptime num_queries: usize) type {
-    return BiniusArgWith(F, E, max_tables, FriPcsMod.FriPcs(F, E, log_blowup, num_queries));
+pub fn BiniusArgFri(comptime F: type, comptime E: type, comptime log_blowup: u8, comptime num_queries: usize) type {
+    return BiniusArgWith(F, E, FriPcsMod.FriPcs(F, E, log_blowup, num_queries));
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +176,7 @@ pub fn BiniusArgFri(comptime F: type, comptime E: type, comptime max_tables: usi
 // ---------------------------------------------------------------------------
 
 const Gf16 = @import("field.zig").Gf16;
-const A = BiniusArg(Gf16, 16);
+const A = BiniusArg(Gf16, Gf16);
 
 fn fe(x: u128) Gf16 {
     return Gf16.fromInt(x);
@@ -298,7 +294,7 @@ test "binius arg extension-mode round trip (F=Gf16, E=Gf2_128)" {
 
     const F = Tower.Gf16;
     const E = Tower.Gf2_128;
-    const Arg = BiniusArgWith(F, E, 16, @import("pcs.zig").CommittedMlePcs(F, E));
+    const Arg = BiniusArgWith(F, E, @import("pcs.zig").CommittedMlePcs(F, E));
 
     inline for (.{ 1, 2, 3 }) |k| {
         const n = @as(usize, 1) << @intCast(k);
@@ -358,7 +354,7 @@ test "binius arg with FRI PCS round trip (single-field and extension)" {
     // Single-field Gf256 (fast in Debug; FRI fold at D = k + 1).
     {
         const F = Tower.Gf256;
-        const Arg = BiniusArgFri(F, F, 16, 1, 2);
+        const Arg = BiniusArgFri(F, F, 1, 2);
 
         inline for (.{ 1, 2, 3, 4 }) |k| {
             const n = @as(usize, 1) << @intCast(k);
@@ -393,7 +389,7 @@ test "binius arg with FRI PCS round trip (single-field and extension)" {
     {
         const F = Tower.Gf16;
         const E = Tower.Gf2_128;
-        const Arg = BiniusArgFri(F, E, 16, 1, 2);
+        const Arg = BiniusArgFri(F, E, 1, 2);
 
         inline for (.{ 1, 2, 3 }) |k| {
             const n = @as(usize, 1) << @intCast(k);
@@ -431,7 +427,7 @@ test "binius arg extension-mode rejects wrong claimed sum and wrong root" {
 
     const F = Tower.Gf16;
     const E = Tower.Gf2_128;
-    const Arg = BiniusArgWith(F, E, 16, @import("pcs.zig").CommittedMlePcs(F, E));
+    const Arg = BiniusArgWith(F, E, @import("pcs.zig").CommittedMlePcs(F, E));
 
     const k = 3;
     var t0: [8]F = undefined;

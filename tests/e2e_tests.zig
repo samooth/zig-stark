@@ -51,7 +51,7 @@ fn biniusAdderRoundTrip(k: usize, tamper: bool) !bool {
     const F = zig_stark.binius.tower.Gf16;
     const E = zig_stark.binius.tower.Gf2_128;
     const Adder = zig_stark.binius.adder.Adder(F, E);
-    const Stark = zig_stark.binius.stark.BiniusStark(F, E, Adder.num_columns);
+    const Stark = zig_stark.binius.stark.BiniusStark(F, E);
     const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F, E);
     const Hash = zig_stark.hash.Hash;
 
@@ -106,7 +106,7 @@ fn biniusAdderFriRoundTrip(k: usize, tamper: bool) !bool {
     const E = zig_stark.binius.tower.Gf2_128;
     const FriPcs = zig_stark.binius.fripcs.FriPcsStark(F, E, 2, 4);
     const Adder = zig_stark.binius.adder.AdderWith(F, E, FriPcs);
-    const Stark = zig_stark.binius.stark.BiniusStarkFri(F, E, Adder.num_columns, 2, 4);
+    const Stark = zig_stark.binius.stark.BiniusStarkFri(F, E, 2, 4);
     const Hash = zig_stark.hash.Hash;
 
     const n = @as(usize, 1) << @intCast(k);
@@ -193,9 +193,9 @@ test "e2e: FRI PCS proof size is sub-linear vs committed-MLE (k = 4..6)" {
     const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F, E);
 
     const AdderFri = zig_stark.binius.adder.AdderWith(F, E, FriPcs);
-    const StarkFri = zig_stark.binius.stark.BiniusStarkFri(F, E, AdderFri.num_columns, 2, 4);
+    const StarkFri = zig_stark.binius.stark.BiniusStarkFri(F, E, 2, 4);
     const AdderCm = zig_stark.binius.adder.AdderWith(F, E, CommittedPcs);
-    const StarkCm = zig_stark.binius.stark.BiniusStarkWith(F, E, AdderCm.num_columns, CommittedPcs);
+    const StarkCm = zig_stark.binius.stark.BiniusStarkWith(F, E, CommittedPcs);
 
     var prev_fri: usize = 0;
     var cm_last: usize = 0;
@@ -252,8 +252,8 @@ test "e2e: BiniusArg FRI PCS proof size is sub-linear vs committed-MLE (k = 4..6
     const F = zig_stark.binius.tower.Gf256;
     const E = zig_stark.binius.tower.Gf256;
     const Hash = zig_stark.hash.Hash;
-    const ArgFri = zig_stark.binius.arg.BiniusArgFri(F, E, 8, 2, 4);
-    const ArgCm = zig_stark.binius.arg.BiniusArgWith(F, E, 8, zig_stark.binius.pcs.CommittedMlePcs(F, E));
+    const ArgFri = zig_stark.binius.arg.BiniusArgFri(F, E, 2, 4);
+    const ArgCm = zig_stark.binius.arg.BiniusArgWith(F, E, zig_stark.binius.pcs.CommittedMlePcs(F, E));
 
     var prev_fri: usize = 0;
     var cm_last: usize = 0;

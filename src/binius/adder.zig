@@ -31,7 +31,7 @@ pub fn AdderWith(comptime F: type, comptime E: type, comptime CP: type) type {
         pub const num_columns = 4 * num_bits; // a, b, s, c (c_0 implicit)
         pub const num_constraints = 4 * num_bits; // 8 bool + 4 sum + 4 carry
 
-        const Stark = StarkMod.BiniusStarkWith(F, E, num_columns, CP);
+        const Stark = StarkMod.BiniusStarkWith(F, E, CP);
         pub const Monomial = Stark.Monomial;
         pub const Constraint = Stark.Constraint;
 

@@ -124,7 +124,7 @@ algebraic identities.
 ## Binius extension-field soundness
 
 The binary-field stack (`binius`) lets the protocol run over an extension field
-`E` of the witness field `F` (`BiniusStark(F, E, max_cols)`, `MlePcs(F, E)`;
+`E` of the witness field `F` (`BiniusStark(F, E)`, `MlePcs(F, E)`;
 take `E = F` for the classic single-field setting). The PCS is a parameter of
 the STARK (`BiniusStarkWith`, plus the `BiniusStarkFri` convenience for the
 polylog FRI-Binius PCS): `CommittedMlePcs(F, E)` opens every hypercube entry,

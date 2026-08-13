@@ -231,7 +231,7 @@ adder gadget (`src/binius/adder.zig`). The witness has 16 bit-sliced columns
 booleanity, 4 full-adder sum, and 4 carry equations.
 
 The gadget runs over the witness field `F = Gf256` with the protocol lifted to
-the extension field `E = Gf2_128` (`BiniusStark(F, E, ...)`), so Schwartz-Zippel
+the extension field `E = Gf2_128` (`BiniusStark(F, E)`), so Schwartz-Zippel
 soundness stays ≈ 2^-128 even though `F` is a small byte field. Boundary pins
 make the first instance's five output bits (`s_0..s_3, c_4`) a public statement:
 they are folded into the zero-check and re-sampled as challenges, so the
