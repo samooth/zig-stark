@@ -1,4 +1,5 @@
 const std = @import("std");
+const Clmul = @import("clmul.zig");
 
 /// The canonical Binius tower of binary fields (Wiedemann tower, [DP23] §2.3).
 ///
@@ -62,8 +63,133 @@ pub fn TowerField(comptime level: u8) type {
             return a.add(b);
         }
 
-        /// Recursive Karatsuba-style multiply in T_ι.
-        pub fn mul(a: Self, b: Self) Self {
+        const FULL_MASK: u128 = if (BITS == 128) std.math.maxInt(u128) else (@as(u128, 1) << BITS) - 1;
+
+        /// Runtime-lazily-built fast-multiply tables, only meaningful for
+        /// `level >= 1`. `T_ι` is a field of size 2^BITS, so it is also
+        /// `GF(2)[x]/(Q)` for the minimal polynomial `Q` of a generator `g`;
+        /// the polynomial basis `{1, g, ..., g^{BITS-1}}` is connected to the
+        /// Cantor basis by the GF(2)-linear change of basis whose columns are
+        /// the Cantor representations of the powers `g^j`. Multiplication
+        /// therefore factors as
+        ///
+        ///     a·b = V·( (V⁻¹·a) · (V⁻¹·b) mod Q ),
+        ///
+        /// where `V⁻¹·a` is the polynomial-basis coordinate vector of `a`, the
+        /// product is a carry-less multiply (CLMUL, `clmul.zig`) and the
+        /// reduction mod `Q` is a precomputed linear map. All three linear maps
+        /// are applied column-wise over GF(2) (`applyMatrix`): for each set
+        /// input bit `j` XOR the precomputed image of basis vector `j`. This
+        /// replaces the 3^level recursive Karatsuba with a handful of u128
+        /// XORs and one or four carry-less multiplications.
+        const Fast = struct {
+            to_poly: [BITS]u128,
+            from_poly: [BITS]u128,
+            reduce: [2 * @as(usize, BITS)]u128,
+        };
+
+        var fast_ready: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+        var fast_mutex: std.atomic.Mutex = .unlocked;
+        var fast_tables: Fast = undefined;
+
+        fn lockSpin(m: *std.atomic.Mutex) void {
+            while (!m.tryLock()) std.atomic.spinLoopHint();
+        }
+
+        /// Build the fast-multiply tables for this level at runtime (comptime
+        /// generation proved too slow in the Zig interpreter). `mulRec`
+        /// recurses through the strictly-lower subfield dispatcher, so
+        /// building level L transitively builds every lower level first.
+        fn buildFast() Fast {
+            // Generator g with a degree-BITS minimal polynomial: V's columns
+            // are the Cantor representations of g^0..g^(BITS-1), and V is
+            // invertible exactly when the minimal polynomial has degree BITS.
+            // The element X_{L-1} (monomial index BITS/2) lies outside the
+            // largest proper subfield T_{L-1}, so its degree divides BITS and
+            // exceeds BITS/2 — hence it equals BITS and {1,g,...,g^(BITS-1)}
+            // is a basis. (A sequential search would waste 2^(BITS/2)
+            // candidates on subfield elements at every level.)
+            var V: [BITS]u128 = undefined;
+            var Vinv: [BITS]u128 = undefined;
+            const g = fromInt(@as(u128, 1) << @intCast(BITS / 2));
+            var p = one();
+            for (0..BITS) |j| {
+                V[j] = p.value;
+                p = p.mulRec(g);
+            }
+            if (!invertCols(V, &Vinv)) @panic("tower: generator must exist at every level");
+            // Minimal polynomial Q(x) = x^BITS + Σ_j q_j x^j, from g^BITS.
+            var gb = one();
+            for (0..BITS) |_| gb = gb.mulRec(g);
+            const q = applyMatrix(&Vinv, gb.value & FULL_MASK);
+            // Reduction columns: red[j] = (x^j mod Q) in the polynomial basis.
+            var reduce: [2 * @as(usize, BITS)]u128 = undefined;
+            var xj: u128 = 1;
+            for (0..2 * @as(usize, BITS)) |j| {
+                reduce[j] = xj;
+                const top = (xj >> @intCast(BITS - 1)) & 1;
+                xj = (xj << 1) & FULL_MASK;
+                if (top == 1) xj ^= q;
+            }
+            return .{ .to_poly = Vinv, .from_poly = V, .reduce = reduce };
+        }
+
+        fn ensureFast() void {
+            if (fast_ready.load(.acquire)) return;
+            lockSpin(&fast_mutex);
+            defer fast_mutex.unlock();
+            if (fast_ready.load(.monotonic)) return;
+            fast_tables = buildFast();
+            fast_ready.store(true, .release);
+        }
+
+        /// GF(2) column-wise linear map application: out = Σ_j v_j · cols[j].
+        fn applyMatrix(cols: []const u128, v: u128) u128 {
+            var out: u128 = 0;
+            var x = v;
+            while (x != 0) {
+                const j = @ctz(x);
+                out ^= cols[j];
+                x &= x - 1;
+            }
+            return out;
+        }
+
+        /// Gaussian elimination returning `true` and writing `cols` to the
+        /// identity and `inv_out` to the matrix inverse, or `false` if singular.
+        fn invertCols(cols: [BITS]u128, inv_out: *[BITS]u128) bool {
+            var c = cols;
+            var i: [BITS]u128 = undefined;
+            for (0..BITS) |j| i[j] = @as(u128, 1) << @intCast(j);
+            for (0..BITS) |piv| {
+                var r: usize = piv;
+                while (r < BITS and ((c[r] >> @intCast(piv)) & 1) == 0) r += 1;
+                if (r == BITS) return false;
+                if (r != piv) {
+                    const t = c[piv];
+                    c[piv] = c[r];
+                    c[r] = t;
+                    const ti = i[piv];
+                    i[piv] = i[r];
+                    i[r] = ti;
+                }
+                for (0..BITS) |k| {
+                    if (k != piv and ((c[k] >> @intCast(piv)) & 1) == 1) {
+                        c[k] ^= c[piv];
+                        i[k] ^= i[piv];
+                    }
+                }
+            }
+            inv_out.* = i;
+            return true;
+        }
+
+        /// Recursive Karatsuba-style multiply in T_ι (the portable reference
+        /// path; also used at comptime to build the fast-multiply tables).
+        /// The halves multiply through their own `mul` dispatcher, which uses
+        /// the subfield's CLMUL fast path even at comptime (`clmul64Auto`
+        /// falls back to software there), so table generation is cheap.
+        pub fn mulRec(a: Self, b: Self) Self {
             if (level == 0) return .{ .value = a.value & b.value };
             const half: u8 = 1 << (level - 1);
             const mask: u128 = (@as(u128, 1) << half) - 1;
@@ -80,6 +206,38 @@ pub fn TowerField(comptime level: u8) type {
             // hi = (a0b1 + a1b0) + a1b1·β = (c2 + c0 + c1) + c1·β
             const hi = c2.add(c0).add(c1).add(c1.mul(S{ .value = BETA }));
             return .{ .value = lo.value | (hi.value << half) };
+        }
+
+        /// CLMUL-based multiply via the polynomial-basis isomorphism. Used as
+        /// `mul` on platforms with the PCLMULQDQ instruction (comptime); always
+        /// available for testing against `mulRec`.
+        pub fn mulFast(a: Self, b: Self) Self {
+            if (level == 0) return .{ .value = a.value & b.value };
+            ensureFast();
+            const MT = &fast_tables;
+            const pa = applyMatrix(&MT.to_poly, a.value & FULL_MASK);
+            const pb = applyMatrix(&MT.to_poly, b.value & FULL_MASK);
+            const prod = if (BITS == 128)
+                Clmul.clmul128Auto(pa, pb)
+            else blk: {
+                const p = Clmul.clmul64Auto(@truncate(pa), @truncate(pb));
+                break :blk .{ .lo = p, .hi = @as(u128, 0) };
+            };
+            var red = applyMatrix(&MT.reduce, prod.lo);
+            var y = prod.hi;
+            while (y != 0) {
+                const j = @ctz(y);
+                red ^= MT.reduce[BITS + j];
+                y &= y - 1;
+            }
+            return .{ .value = applyMatrix(&MT.from_poly, red) & FULL_MASK };
+        }
+
+        /// Multiply in T_ι: the CLMUL fast path where the hardware has the
+        /// instruction, otherwise the recursive Karatsuba path.
+        pub fn mul(a: Self, b: Self) Self {
+            if (Clmul.has_hardware_clmul and level >= 1) return a.mulFast(b);
+            return a.mulRec(b);
         }
 
         pub fn pow(a: Self, exp: anytype) Self {
@@ -256,6 +414,35 @@ test "tower is a field: distributivity and associativity" {
             try std.testing.expect(a.add(b).eq(b.add(a)));
             try std.testing.expect(a.mul(b).eq(b.mul(a)));
             try std.testing.expect(a.add(b).add(c).eq(a.add(b.add(c))));
+        }
+    }
+}
+
+test "exhaustive: fast CLMUL multiply matches recursive Karatsuba (GF4, GF16, GF256)" {
+    inline for (.{ 1, 2, 3 }) |lv| {
+        const F = TowerField(lv);
+        const n = @as(usize, 1) << @intCast(@as(u8, 1) << @intCast(lv));
+        var i: usize = 0;
+        while (i < n) : (i += 1) {
+            const a = F.fromInt(i);
+            var j: usize = 0;
+            while (j < n) : (j += 1) {
+                const b = F.fromInt(j);
+                try std.testing.expect(a.mulFast(b).eq(a.mulRec(b)));
+            }
+        }
+    }
+}
+
+test "random: fast CLMUL multiply matches recursive Karatsuba at every level" {
+    inline for (1..8) |lv| {
+        const F = TowerField(lv);
+        var s: u64 = lv * 1234;
+        for (0..200) |_| {
+            const a = rng(F, &s);
+            const b = rng(F, &s);
+            try std.testing.expect(a.mulFast(b).eq(a.mulRec(b)));
+            try std.testing.expect(a.mul(b).eq(a.mulRec(b)));
         }
     }
 }
