@@ -9,7 +9,7 @@ Working end-to-end on both stacks:
 - **M31 DEEP-FRI STARK** — the prover and verifier in `src/m31/stark.zig` handle any AIR implementing the `GenericStark` interface, including optional preprocessed columns and **LogUp multiset lookups**, with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer.
 - **Binius binary-field stack** — a zero-check STARK (`src/binius/stark.zig`) over the canonical Wiedemann tower of binary fields (`src/binius/tower.zig`), combining committed multilinear PCS openings via sum-check (`src/binius/sumcheck.zig`, `src/binius/pcs.zig`), with an additive FRI low-degree test (`src/binius/addfri.zig`), a standalone product-sum argument (`src/binius/arg.zig`, now `(F, E, PCS)`-parameterized like the STARK), and a batched 4-bit ripple-carry adder gadget (`src/binius/adder.zig`) demonstrated by an end-to-end example. The STARK is parameterized over field, extension field, and the committed-MLE PCS (`CommittedMlePcs` opens all 2^k entries; the `PackedPcs` mode in `src/binius/packed_pcs.zig` commits each witness column as a *packed* univariate polynomial via a column-Merkle tree, opening only the row combination and a handful of sampled columns for sub-linear proofs). The **polylog FRI-Binius PCS** (`src/binius/fripcs.zig`, wired in as `BiniusStarkFri` / `BiniusArgFri`) FRI-folds the additive-NTT code in lockstep with the eval sum-check for O(polylog) proof size. It supports boundary pins (public column-point evaluations folded into the zero-check, like M31 boundary assertions), and all randomness flows through a single unified Fiat-Shamir channel (`src/core/channel/channel.zig`) that also binds public inputs. The protocol can run over a large extension field `E` (e.g. `tower.Gf2_128`) of a small witness field `F`, keeping ≈ 2^-128 Schwartz-Zippel soundness for script-friendly GF(16)/GF(256) witnesses at the price of `E`-field arithmetic.
 
-188 tests pass (179 unit + 9 end-to-end) with no leaks.
+193 tests pass (184 unit + 9 end-to-end) with no leaks.
 
 ## Documentation
 
@@ -81,6 +81,12 @@ Run the examples:
 - `QM31` — quartic extension (tower `M31 -> CM31 -> QM31`), the "secure" field carrying the full 2^32-th roots of unity used for FRI and STARK arithmetic.
 - `Gf16` / `Gf256` — `BinaryField` over GF(2^4) / GF(2^8) (`src/binius/field.zig`), small script-friendly witness fields.
 - `tower.Gf2 .. Gf2_128` — the canonical Wiedemann tower of binary fields (`src/binius/tower.zig`); `Gf2_128 = TowerField(7)` is the usual soundness extension field `E` (≈ 2^-128 Schwartz-Zippel error) for a small base `F`.
+
+## Releases
+
+See [`CHANGELOG.md`](CHANGELOG.md) for per-version changes. Released versions
+are tagged `vX.Y.Z`; the public API follows semantic versioning, so 0.x minor
+bumps may break the API and are documented in the changelog.
 
 ## License
 
