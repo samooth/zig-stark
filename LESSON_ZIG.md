@@ -111,7 +111,7 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
   needs an explicit free.
 - Random in tests: `rnd.uintLessThan(u32, bound)`, not `rnd.uint(u32)`.
 
-## Unified Fiat-Shamir channel + comptime params (max_cols session)
+## Unified Fiat-Shamir channel (channel session)
 
 - The binius STARK previously derived τ, α_t and the sum-check seed through four
   ad-hoc `Sha256.init` helpers (`seedForRoots`, `seedFor`, `challengePoint`,
@@ -123,17 +123,12 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
 - To expose the channel state for seeding a nested transcript, `sampleBytes`
   was promoted from private to `pub` on the core `Channel`; it already absorbs
   the derived bytes back (correct Fiat-Shamir), so later samples stay fresh.
-- `BiniusStark(F)` and `BiniusArg(F)` became `BiniusStark(F, comptime max_cols)`
-  and `BiniusArg(F, comptime max_tables)`: the 16-column cap is now a comptime
-  parameter. Zig has no default type/param values, so every call site must pass
-  it. The adder ties it to its own `num_columns` (`4 * num_bits`), so bumping the
-  gadget width later grows the STARK cap automatically.
-- Gotcha: a comptime struct const that is only used inside a helper becomes
-  unused-if-dead — but `domain` (`Channel.init(domain)`) stays referenced, and
-  tests read it via `BiniusStark(Gf256, 16).domain` without instantiating.
 - The `sample(F)`-based challenges use each field's `fromBytes` (which masks to
   `BITS`), so the 4-bit-mask regression still holds: `fromInt` masks to 4/8 bits
   on `SIZE == 1` tower fields.
+- (Superseded in the runtime-caps session below: the comptime `max_cols` /
+  `max_tables` parameters this section originally documented were later removed
+  — the STARK and arg are `BiniusStark(F, E)` / `BiniusArg(F, E)` again.)
 
 ## Boundary pins (public assertions) session
 
@@ -161,8 +156,9 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
 ## Extension-field (E) soundness session
 
 - The binius PCS and STARK are now parameterized over (F, E):
-  `MlePcs(F, E)`, `CommittedMlePcs(F, E)`, `BiniusStark(F, E, max_cols)`,
-  `Adder(F, E)`; take `E = F` for the classic single-field setting. The witness,
+  `MlePcs(F, E)`, `CommittedMlePcs(F, E)`, `BiniusStark(F, E)`,
+  `Adder(F, E)`, `BitPack(F, E)`; take `E = F` for the classic single-field
+  setting. The witness,
   the Merkle leaves, and the commitments stay in `F`; τ, α_t, the sum-check
   round challenges, and the PCS query points live in `E`; base entries are
   lifted via `E.embed(F.LEVEL, x)` (zero-cost, identical bit string). Every
@@ -183,6 +179,123 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
 - Debug builds over GF(2^128) are very slow (un-inlined recursive Karatsuba
   tower mul, ~3^7 base ops per mul); the adder example exceeds two minutes in
   Debug. Use ReleaseFast for extension-mode runs.
+
+## CLMUL / comptime-heavy code session (tower fast-multiply, §5)
+
+- **Inline asm: `pclmulqdq` is a 2-operand instruction** (the destination XMM is
+  also the first source) while `vpclmulqdq` is 3-operand but requires AVX. The
+  non-VEX form worked with one `"+x"` output (preloaded with operand a) and one
+  `"x"` input: `pclmulqdq $0x00, %[b], %[out]`. Gate on
+  `builtin.cpu.has(.x86, .pclmul)` (this std uses `.pclmul`; `std.crypto.ghash_polyval`
+  shows the `vpclmulqdq` variant with an extra `.avx` check).
+- **u128 shifts need `u7` amounts.** `b >> i` with `i: u8` is a compile error
+  ("expected type 'u7'"). But `while (i < 64)` / `while (i < 128)` loop counters
+  of type `u6` / `u7` *overflow at the final increment* and panic at runtime —
+  use a `u8` counter and `@intCast` each shift amount (bounds are loop-guaranteed).
+- **`@inComptime()` routes hardware-only asm away from the comptime
+  interpreter.** A `clmul64Auto` that returns the software fallback when
+  `@inComptime()` is true lets comptime code reuse the same fast-path function
+  without executing the `pclmulqdq` instruction in the compiler.
+- **Heavy comptime table generation is a trap.** Precomputing the tower's
+  fast-multiply tables at comptime (generator search = BITS recursive tower
+  muls) exceeded `evaluation exceeded 16777216 backwards branches` and took
+  ~90 s to fail. `@setEvalBranchQuota` just raises the ceiling; the interpreter
+  is slow enough that generation should be moved to *runtime* lazy init (a few
+  microseconds) instead. Prefer comptime only for small, cheap constants.
+- **No `std.once` / `CallOnce` in this 0.16 std.** `std.atomic.Mutex` only has
+  `tryLock` / `unlock` (no blocking `lock`): write a spin
+  `while (!m.tryLock()) std.atomic.spinLoopHint();` plus an
+  `std.atomic.Value(bool)` "ready" flag with acquire/release ordering for lazy
+  init. Note the per-instantiation `var` at container scope inside the generic
+  `TowerField(level)` struct gives one global per level.
+- **Array-length arithmetic overflows narrow ints.** `[2 * BITS]u128` with
+  `BITS: u8` (128) → `256` overflows `u8` at comptime. Cast to `usize`:
+  `[2 * @as(usize, BITS)]u128`.
+- **Anonymous struct field type inference can poison a `var`.** The `else`
+  branch `.{ .lo = p, .hi = 0 }` infers `.hi` as `comptime_int`; the peer type
+  of the whole `if` becomes that, and `var y = prod.hi;` then errors ("variable
+  of type comptime_int must be const"). Annotate: `.hi = @as(u128, 0)`.
+- **A `const` declared inside a `while` body is not visible after the loop.**
+  Hoist `var g: Self = undefined;` above the search loop and assign inside.
+- **Parameter names collide with struct members.** A parameter `inv` inside a
+  struct that already has `pub fn inv` fails with "function parameter shadows
+  declaration of 'inv'". Rename the parameter (`inv_out`).
+- Generic recursion subtlety: a `mulRec` that recurses through the *subfield's*
+  `mul` dispatcher keeps comptime use cheap, but a `mulRec` that calls its own
+  level's fast path deadlocks on the lazy-init mutex — build tables at a level
+  only via strictly-lower-level dispatches.
+
+## Runtime caps session (drop comptime max_cols / max_tables)
+
+- The comptime caps introduced in the channel session (`max_cols` /
+  `max_tables`) made the STARK types depend on a fixed array bound and forced
+  every call site to repeat the gadget's width. Removing them means every
+  fixed-size array sized by the cap becomes a heap allocation at the *actual*
+  count: roots, `seen`, `distinct`, `value_of` in `stark.zig`, roots in
+  `arg.zig`. `BiniusStarkWith(F, E, CP)` is the canonical interface;
+  `BiniusStark(F, E)` / `BiniusStarkFri(F, E, log_blowup, q)` are thin aliases.
+- `seedForRoots` previously packed up to `max_tables * 32` bytes to hash; with
+  the cap gone it streams through `Channel`/Blake3 incrementally instead
+  (one `update` per root), so no `[N]u8` buffer sized by a cap is needed.
+- Passing a comptime slice argument through many layers stays comptime at the
+  call site but is easy to break: after removing the third type parameter, the
+  remaining callers (adder example, e2e tests, benchmarks, in-module tests) all
+  needed the trailing arg dropped — grep for `BiniusStark(`/`BiniusArg(` before
+  and after.
+
+## Memory model / caller-deinit session (leak sweep)
+
+- **`errdefer` does NOT fire on `return null`.** The sum-check's `runRounds`
+  had `errdefer allocator.free(challenges)` and `return null` when a round
+  consistency check failed — that return skips errdefer, so every *rejected*
+  proof (the normal path for a tampered root, which changes the transcript-seeded
+  challenge) leaked `challenges`. Fix: free explicitly before the `return null`.
+  When a function can fail with `?T`, never rely on `errdefer` for the null path.
+- The caller-deinit convention: every public `Proof` owns its heap memory and
+  exposes `deinit(self: *Proof, allocator)`; call with the *same* allocator as
+  `prove`. A proof binding must be `var` for the deferred deinit (it takes
+  `*Proof`): `var proof = try S.prove(alloc, ...); defer proof.deinit(alloc);`.
+  `verify` never frees proof memory; a rejected proof still must be deinit'd.
+- De-arenaring the test suite: dozens of tests wrapped bodies in
+  `std.heap.ArenaAllocator` (which never leak-checks). Converting each to
+  `std.testing.allocator` surfaced every missing free (proofs, Merkle trees,
+  forged-witness copies, gadget witnesses) — the whole suite now runs under the
+  leak-checking allocator.
+- Test leak-fix pattern that kept recurring: a test committed its own columns
+  with `CommittedPcs.commit` but never called `tree.deinit()`, and `Proof`
+  types with a `self: *Proof` deinit forced the binding from `const` to `var`.
+  `freeWitness`/`freeColumns` helpers exist so the gadget builder and its test
+  share one free path.
+
+## Bit-pack gadget session
+
+- A `blk:` block uses `break :blk` / `break :inner`, **not** `return` —
+  `'return' outside function scope` is the error when you write `return out;`
+  inside the `const constraints = blk: { ... };`.
+- A `var` inside a comptime `blk:` cannot be the address taken into a global:
+  `error: global variable contains reference to comptime var`. Fix: wrap the
+  mutable fill in an inner `blk:` that produces a `const` array
+  (`const pack_terms = inner: { var tmp ...; break :inner tmp; };`), then
+  `&pack_terms` is a stable global reference. The label must be renamed (the
+  outer block already owns `blk`).
+- Bit-width generic types: `std.meta.Int(.unsigned, F.BITS)` gives `u4`/`u8`/
+  `u128` per field in one expression — the gadget's `UInt` stays in sync with
+  the tower width without a separate `comptime intWidth`.
+- `inline for (.{ Gf16, Gf256 }) |F|` lets one test body instantiate a generic
+  gadget over two fields; each iteration is its own scope, so per-iteration
+  `defer`s run at iteration end (no leaks between fields).
+- `[n]T` array types need comptime `n`: a `const n = @as(usize, 1) << k` with
+  comptime `k` is fine, but the same expression with runtime `k` is not — keep
+  the `const k = 2;` pattern for stack arrays like the forged-witness column.
+- `@truncate(v.value)` is the inverse of `F.fromInt(x)`: the tower bit string
+  *is* the integer representation, so unpacking a packed value is free and the
+  pack equation `v = Σ b_i·fromInt(1<<i)` is a field identity in the standard
+  basis (no tower-specific basis math needed).
+- Rejection tests over tiny witnesses must break *every* hypercube point:
+  a single-cell violation is a point polynomial whose MLE vanishes for most τ in
+  a small field, so re-prove over a whole-column violation (`2` in every cell
+  of a bit column → booleanness sum = α ≠ 0) for guaranteed rejection.
+
 
 
 
