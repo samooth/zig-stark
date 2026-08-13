@@ -289,3 +289,46 @@ the API. Concretely:
 - All library tests run against `std.testing.allocator` so every test is
   leak-checked; the suite will fail on any un-freed allocation.
 
+## 9. Batched openings (design, TODO — M2)
+
+The biggest remaining proof-size gap is the number of *openings*. `verifyEval`
+runs `num_queries` independent openings, each of which either opens a single
+entry per column (the O(2^k) `CommittedMlePcs`) or runs a full FRI query (the
+polylog `FriPcs`). Both multiply the per-query transcript cost by the query
+count and, in the FRI case, re-send the whole query-consistency chain for
+every query. Batching attacks this directly:
+
+- **Batched FRI queries.** FRI itself is a batch argument: the verifier can
+  merge `q` queries by sampling a random `λ_j` per query and checking the
+  single folded combination `Σ λ_j·query_j`. Instead of `q` independent query
+  chains, the prover sends one response polynomial per queried *layer* whose
+  Merkle path is shared, and the verifier checks the combination once. This
+  removes a factor of `q` from the query section of the proof.
+- **Batched opening via a single sumcheck (Brakedown-style).** The current
+  eval openings verify one `(col, point)` at a time. The batch-opening
+  protocol asks for all `(col_j, x_j)` in one sumcheck: define the batched
+  polynomial `g(z) = Σ_j λ_j·f_j(z)` over the queried columns `f_j`, have the
+  prover commit the batched "combiner" table `g(x) = Σ_j λ_j·f_j(x)` at the
+  FRI-blown-up code size, and run a single interactive sumcheck that each
+  claimed `g(x_j)` matches `g`'s committed code. The proof is then dominated
+  by one code-consistent evaluation sumcheck instead of `q` Merkle paths
+  (`O(q·d·|E|)` total → `O(k·|E|)` per query batch).
+- **Tower-size-1 packing.** `PackedPcs` already commits packed univariate
+  columns; extending the packing to tower size 1 (`v(i) = f_eval(i)` directly,
+  no interleaving) lets the batched combiner be committed and opened with the
+  same machinery, so batch-opening composes with `FriPcs` without a second
+  commitment scheme.
+
+Interaction with the FRI lockstep in §5: the lockstep sumcheck folds the code
+with the *same* challenges as the eval sumcheck, which is exactly the shape a
+batched opening wants — the combiner `g` is a linear combination of the
+committed columns, so its code fold is the same combination of the per-column
+folds. Implementation (M2) therefore: (1) batch the FRI queries with λ
+combination; (2) replace per-query eval openings with one Brakedown-style
+batched sumcheck over `g`; (3) verify the batched claim against the FRI-final
+value; (4) size-test at k = 4..6 as in `tests/e2e_tests.zig`. Soundness needs
+a fresh λ per batch and an `|F|`-side Schwartz-Zippel term per combined
+column (the combination coefficient can cancel a zero-check sum, as noted in
+§3), so the batched-opening section must re-derive its own error bound rather
+than reusing the per-query one.
+

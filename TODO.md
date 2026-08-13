@@ -4,7 +4,8 @@ Current status: zero-check STARK over the tower field with a pluggable
 committed-MLE PCS (`BiniusStarkWith`): the O(2^k) `CommittedMlePcs`, the
 sub-linear `PackedPcs`, and the sub-linear polylog FRI-Binius PCS
 (`fripcs.zig`, FRI-fold in lockstep with the eval sum-check). Extension-field
-`(F, E)` soundness mode, boundary pins, and a batched 4-bit adder gadget. 188 tests.
+`(F, E)` soundness mode, boundary pins, and two gadgets (4-bit adder,
+bit-pack). 196 tests (187 unit + 9 end-to-end).
 
 ## 1. Sub-linear MLE evaluation / commitment (HIGH, DONE — polylog route landed)
 
@@ -82,9 +83,16 @@ packing/evaluation identity with proof. `docs/overview.md` keeps the informal
 
 ## 4. More binius AIRs / gadget framework (MEDIUM)
 
-Only the 4-bit adder exists. Add a small constraint DSL (or two more gadgets:
-range check, bit-sliced comparison) to demonstrate the constraint system's
-generality and to exercise pins + extension mode on non-adder witnesses.
+The 4-bit adder and the bit-pack gadget (`src/binius/bitpack.zig`) are the two
+reference implementations of the `BiniusStarkWith` interface. Next candidates:
+range check and bit-sliced comparison built on `BitPack`, and a small
+constraint DSL if a third gadget wants shared helper terms.
+
+## 4b. Batched / batched-VSB commitments (HIGH, TODO — M2, design documented)
+
+`docs/binius.md` §9 sketches the batch-opening design (single polynomial per
+queries batch, batched-Brakedown sumcheck, tower-size-1 packing) as a TODO
+milestone; see that section before starting implementation.
 
 ## 5. Performance (LOW)
 
