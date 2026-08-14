@@ -21,6 +21,7 @@ Working end-to-end on both stacks:
 - [`docs/examples.md`](docs/examples.md) — how the Fibonacci and linear-ML examples work, and how to write a new AIR
 - [`docs/binius.md`](docs/binius.md) — the binary-field stack's soundness: transcript order, every Schwartz-Zippel error term, concrete `(Gf256, Gf2_128)` security, the FRI final-check and packing identities
 - [`docs/wire.md`](docs/wire.md) — the canonical little-endian proof wire format (`src/core/serialization.zig`), used by every proof in both stacks
+- [`docs/roadmap.md`](docs/roadmap.md) — current status and future work (recursive verification, parallel prover, smaller batch openings, on-chain verification)
 
 ## Project structure
 
