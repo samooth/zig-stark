@@ -77,6 +77,7 @@ src/
     constraints.zig Comptime constraint DSL for composing gadgets
     addfri.zig  Additive FRI low-degree test over the tower field
     arg.zig     Argument composition (sum-check + committed PCS)
+    capi.zig    C ABI for the Binius STARK (host allocator, wire-format I/O)
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation (degree-5 sbox)
@@ -84,6 +85,9 @@ examples/
   binius_adder/ Binius STARK proving a batch of 4-bit additions
   binius_bitpack/ Binius STARK proving a batch of 8-bit values
   binius_rangecmp/ Binius STARK proving a bounded strictly-increasing sequence
+bindings/
+  js/             WebAssembly binding (ESM/CJS/TS wrapper + .wasm)
+  node/           Node.js N-API native addon
 tests/          Library and end-to-end tests
 docs/           This documentation
 ```

@@ -145,7 +145,7 @@ breaking changes.
   the compatibility pass (commit `2e3e0fc`) replaces the dev-era
   `std.heap.GeneralPurposeAllocator` with `std.heap.DebugAllocator` in examples
   and benchmarks and marks never-mutated locals as `const` (batchpcs, fripcs,
-  simd test). All 217 tests pass on stable; README, `LESSON_ZIG.md` and
+  simd test). All 223 tests pass on stable; README, `LESSON_ZIG.md` and
   `build.zig.zon` (already `minimum_zig_version = "0.16.0"`) document it.
 - **`src/binius/packed_pcs.zig` now packs rows with the additive NTT instead of
   O(N²) Lagrange interpolation.** `buildRows` uses `inverseForwardTransform`

@@ -11,9 +11,12 @@
   (`CommittedMlePcs`, `PackedPcs`, polylog `FriPcs`, batched `BatchFriPcs`),
   extension-field `(F, E)` soundness, boundary pins, a gadget library (adder,
   bit-pack, range check, comparison) composable via a comptime constraint DSL,
-  and canonical proof serialization.
+  canonical proof serialization, a parallel prover (`core.pool.Pool`, ~4x at 8
+  cores), and a C ABI (`src/capi.zig`, `zig-capi.h`) driving a WebAssembly
+  binding for browsers (`bindings/js/`) and a native N-API addon for Node
+  (`bindings/node/`).
 - Toolchain/quality: Zig 0.16.0 stable pinned in CI and a SHA-verified
-  `Dockerfile`; 217 tests (202 unit + 15 e2e, leak-checked); published
+  `Dockerfile`; 223 tests (207 unit + 16 e2e, leak-checked); published
   benchmarks; Apache-2.0.
 
 The original TODO milestone list is fully implemented; protocol and soundness
