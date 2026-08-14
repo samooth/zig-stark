@@ -181,6 +181,9 @@ multilinear `f` in `O(k)` rounds. Protocol:
 1. **Commit.** Encode the table with the additive NTT at rate `2^log_blowup`
    (`Ntt.encode`), lift to `E`, and Merkle-commit *adjacent pairs* as leaves
    (`pairHash`, `fripcs.zig:181`); `root0` is the stage-2 transcript seed.
+   `Ntt` also exposes the inverse transform `inverseForwardTransform`
+   (interpolation) and `pack.novelEval` (single-point evaluation), the
+   primitives `PackedPcs` uses (§6).
 2. **Lockstep eval sum-check + FRI fold, k rounds** (`fripcs.zig:499`). Per
    round: absorb the claimed value, then the three coefficients `c`; check
    `c_1 + c_2 = claim` (the `p(0)+p(1)=claim` test in char 2); sample the fold
@@ -218,7 +221,20 @@ log_blowup ≤ F.BITS`, and `num_queries ≤ 2^{D-1}` (`fripcs.zig:471-477`).
 
 ## 6. The packing / evaluation identity (`pack.zig`)
 
-`PackedMle(F)` supports the `PackedPcs` route via the polynomial identity
+`PackedPcs` packs each row into a univariate polynomial of degree `< 2^{k2}`
+(§1 `k` split as `k = k1 + k2`) and extends it over the additive domain.
+Since a polynomial of degree `< 2^{k2}` is uniquely determined by its `2^{k2}`
+values on the subgroup `H = {fromInt(j) : j < 2^{k2}}`, the row is represented
+in the *novel* basis the additive NTT consumes (`Ntt` in `fripcs.zig`):
+`inverseForwardTransform` turns the row values into novel-basis coefficients
+(O(2^{k2}·k2)), `forwardTransform` on the zero-padded message extends them to
+the `2^{k2+log_blowup}`-point domain in `fromInt` order (O(M log M)), and
+`pack.novelEval` evaluates a novel-basis polynomial at a single point (O(N)).
+The polynomial is the same object the classical Lagrange interpolation produces,
+so proofs are byte-identical either way.
+
+The mathematical root of the packing is the *coefficient-extraction identity*,
+kept in `pack.zig` as the reference (pinned by its tests):
 
 ```
 f(r) = d · [x^{N-1}] ( g · B_r  mod  Z_H )
@@ -242,11 +258,10 @@ g·B_r ≡ Σ_i f(i)·β_r(i)·λ_i   (mod Z_H).
 ```
 
 Each `λ_i` is monic of degree `N-1`, so the coefficient of `x^{N-1}` in the
-residue is `(1/d)·Σ_i f(i)β_r(i) = f(r)/d`, and the identity follows. The
-verifier who holds the packed `g` (committed per-row, `packed_pcs.zig`) computes
-the residue's top coefficient in `O(N)` and checks it against `f(r)` — this is
-the scalar check at the end of the `PackedPcs` protocol (S6). For a subfield `H`
-of `F`, `Z_H' ≡ 1` so `d = 1`.
+residue is `(1/d)·Σ_i f(i)β_r(i) = f(r)/d`, and the identity follows. For a
+subfield `H` of `F`, `Z_H' ≡ 1` so `d = 1`. In `PackedPcs` the verifier instead
+recomputes `f(r) = Σ_j β_{r_col}(j)·t(x_j)` directly from the row combination
+`t` (S6); the identity is what the novel-basis packing generalizes.
 
 ## 7. Where each check lives
 
@@ -259,7 +274,8 @@ of `F`, `Z_H' ≡ 1` so `d = 1`.
 | Terminal zero-check identity | `stark.zig:525-541` |
 | Committed PCS eval | `pcs.zig` (`CommittedMlePcs`, `MlePcs`) |
 | FRI lockstep fold + final check | `fripcs.zig:464` (`verifyEval`), `fripcs.zig:510-516` |
-| Packing identity / eval | `pack.zig:8-26`, `packed_pcs.zig:29` |
+| Additive NTT (forward / inverse), novel-basis eval | `fripcs.zig` (`Ntt`), `pack.zig` (`novelEval`) |
+| Packing / row combination | `packed_pcs.zig` (`buildRows`, `buildCodewords`, `evalT`) |
 
 ## 8. Memory model (caller-deinit convention)
 

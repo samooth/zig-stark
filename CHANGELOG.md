@@ -34,22 +34,6 @@ breaking changes.
   false`; `deinit` frees `entries` when set, so serialized proofs remain
   leak-free.
 - e2e round-trip tests in `tests/e2e_tests.zig` for all proof shapes above.
-
-### Changed
-
-- **`src/binius/packed_pcs.zig` now packs rows with the additive NTT instead of
-  O(N²) Lagrange interpolation.** `buildRows` uses `inverseForwardTransform`
-  (O(2^{k2}·k2)) to put each row into novel-basis coefficients; `buildCodewords`
-  uses `forwardTransform` on the zero-padded novel message (O(M log M), M =
-  2^{k2+log_blowup}) instead of O(N·M) Horner extension; single-point
-  row-combination evaluations use `pack.novelEval`. The interpolating
-  polynomials are unchanged (the novel basis represents the same degree-<2^{k2}
-  polynomial), so proofs are byte-identical.
-- **`src/binius/addfri.zig` packs each FRI fold-pair into one Merkle leaf**
-  (`hashPair` hashes the concatenated element bytes once), halving the per-layer
-  leaf count and the Blake3 call count; `LayerProof` carries a single `path`
-  instead of `path0`/`path1` (proofs and Merkle paths per query halve).
-
 - `src/binius/batchpcs.zig`: batched eval PCS (M2). `BatchFriPcs(F, E,
   log_blowup, q)` shares one Merkle tree per FRI layer across all columns
   opened at the same point, so a single query path per round serves every
@@ -101,7 +85,23 @@ breaking changes.
   `BiniusArg` (product-sum) vs `BiniusStark` (zero-check) distinction.
 - `docs/binius.md` §9: a batched-openings design (batched FRI queries, one
   Brakedown-style sumcheck for all eval openings, tower-size-1 packing) as a
-  TODO milestone (M2), not yet implemented.
+  TODO milestone (M2) and is now implemented: shared per-layer FRI trees make
+  a single query path per round serve every column.
+
+### Changed
+
+- **`src/binius/packed_pcs.zig` now packs rows with the additive NTT instead of
+  O(N²) Lagrange interpolation.** `buildRows` uses `inverseForwardTransform`
+  (O(2^{k2}·k2)) to put each row into novel-basis coefficients; `buildCodewords`
+  uses `forwardTransform` on the zero-padded novel message (O(M log M), M =
+  2^{k2+log_blowup}) instead of O(N·M) Horner extension; single-point
+  row-combination evaluations use `pack.novelEval`. The interpolating
+  polynomials are unchanged (the novel basis represents the same degree-<2^{k2}
+  polynomial), so proofs are byte-identical.
+- **`src/binius/addfri.zig` packs each FRI fold-pair into one Merkle leaf**
+  (`hashPair` hashes the concatenated element bytes once), halving the per-layer
+  leaf count and the Blake3 call count; `LayerProof` carries a single `path`
+  instead of `path0`/`path1` (proofs and Merkle paths per query halve).
 
 ## [0.2.0] - 2026-08-13
 

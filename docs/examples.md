@@ -408,7 +408,7 @@ How to choose between the layers:
 |--------------------------------------|-----------------------------------|-------------------------------|
 | Custom zero-check gadget over a tower field | `BiniusStarkWith(F, E, CP)` | `stark.zig`            |
 | Gadget with default PCS (eval-open every point) | `BiniusStark(F, E)` | `stark.zig`       |
-| Proofs with sub-linear openings (additive FRI) | `BiniusStarkFri(F, E, log_blowup, q)` | `stark.zig` |
+| Proofs with sub-linear openings (polylog FRI-Binius) | `BiniusStarkFri(F, E, log_blowup, q)` | `stark.zig` |
 | A product-sum argument over `Gf2_128` | `BiniusArg(F, E)` (and `*Fri`, `*With`) | `arg.zig` |
 | Plug in any committed MLE PCS       | `CommittedMlePcs` / `FriPcs`      | `pcs.zig` / `fripcs.zig`      |
 

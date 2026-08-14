@@ -8,9 +8,15 @@ DEEP method.
 
 The current implementation is a complete **DEEP-FRI STARK**: prover and verifier
 for any AIR that fits the `GenericStark` interface, with end-to-end proofs for a
-Fibonacci sequence and for a single linear ML layer. AIRs may optionally add
-preprocessed (lookup table) columns checked with a **LogUp multiset argument**
-(e.g. range checks), committed in a second protocol phase.
+Fibonacci sequence, a Rescue permutation, and a single linear ML layer. AIRs may
+optionally add preprocessed (lookup table) columns checked with a **LogUp
+multiset argument** (e.g. range checks), committed in a second protocol phase.
+
+There is also a complete **Binius / BSV binary-field stack** (`binius`): a
+zero-check STARK over a tower field with a pluggable committed-MLE PCS, a
+gadget library (bit-sliced adder, bit-pack, range check, comparison) with a
+comptime constraint DSL for composing gadgets, proof serialization, and
+end-to-end examples (`binius_adder`, `binius_bitpack`, `binius_rangecmp`).
 
 ## Field tower
 
@@ -29,19 +35,21 @@ itself has 2-adicity 1 and is therefore only used for native arithmetic.
 The source tree is split into three modules, re-exported by `src/root.zig`:
 
 - `core` — field-agnostic primitives: Blake3 hashing, Merkle trees, the
-  Fiat-Shamir transcript channel, SIMD/bit utilities.
+  Fiat-Shamir transcript channel, canonical proof serialization, SIMD/bit
+  utilities.
 - `m31` — the M31/CM31/QM31 STARK stack: field tower, circle geometry, NTTs,
   AIR abstractions, univariate polynomials, FRI, and the DEEP-FRI STARK.
   Field-element hashing lives here (`src/m31/hash.zig`).
 - `binius` — binary-field (Binius/BSV) stack over GF(2^k): zero-check constraints,
-  combined sum-check, Fiat-Shamir binding, and pluggable committed-MLE
+  combined sum-check, Fiat-Shamir binding, pluggable committed-MLE
   evaluation proofs (`CommittedMlePcs`, sub-linear `PackedPcs` and polylog
-  `FriPcs`).
+  `FriPcs` / batched `BatchFriPcs`), and a gadget library (adder, bit-pack,
+  range check, comparison) composable through a comptime constraint DSL.
 
 ```
 src/
   root.zig      Module namespaces (core, m31, binius)
-  core/         Field-agnostic: hash, merkle, channel, bit_utils, simd
+  core/         Field-agnostic: hash, merkle, channel, serialization, bit_utils, simd
   m31/
     field/      M31, CM31, QM31 arithmetic (+ SIMD helpers)
     circle/     Circle point group, domains, cosets
@@ -56,12 +64,17 @@ src/
     field.zig   BinaryField GF(2^k) arithmetic
     sumcheck.zig    Sum-check over binary fields
     polynomial.zig  Multilinear polynomials, univariate interpolation
-    pack.zig    Packed-MLE interpolation/evaluation
+    pack.zig    Packed-MLE interpolation / novel-basis evaluation (novelEval)
     pcs.zig     Merkle-bound committed multilinear PCS (O(2^k) openings)
-    packed_pcs.zig  Sub-linear PCS via row packing + column Merkle tree
+    packed_pcs.zig  Sub-linear PCS via row packing (additive NTT) + column Merkle tree
     fripcs.zig  Polylog FRI-Binius PCS (FRI fold in lockstep with the eval sum-check)
+    batchpcs.zig Batched eval PCS (one shared Merkle tree per FRI layer across columns)
     stark.zig   Zero-check STARK prover / verifier (pluggable PCS)
     adder.zig   Bit-sliced ripple-carry adder gadget
+    bitpack.zig Bit-pack gadget (boolean bit columns + packed value)
+    rangecheck.zig Range-check gadget (value fits in 2^m)
+    compare.zig Bit-sliced less-than / equality comparison gadget
+    constraints.zig Comptime constraint DSL for composing gadgets
     addfri.zig  Additive FRI low-degree test over the tower field
     arg.zig     Argument composition (sum-check + committed PCS)
 examples/
@@ -69,6 +82,8 @@ examples/
   rescue/       STARK proving a Rescue permutation (degree-5 sbox)
   ml_linear/    STARK proving a single linear layer y = w . x
   binius_adder/ Binius STARK proving a batch of 4-bit additions
+  binius_bitpack/ Binius STARK proving a batch of 8-bit values
+  binius_rangecmp/ Binius STARK proving a bounded strictly-increasing sequence
 tests/          Library and end-to-end tests
 docs/           This documentation
 ```
@@ -78,7 +93,7 @@ docs/           This documentation
 Requires Zig 0.16.x.
 
 ```sh
-zig build            # builds the four example executables
+zig build            # builds the example executables
 zig build test       # runs the library unit tests and e2e tests
 zig test src/root.zig # equivalent unit-test entry point
 ```
@@ -90,9 +105,11 @@ Run the examples:
 ./zig-out/bin/rescue
 ./zig-out/bin/ml_linear
 ./zig-out/bin/binius_adder
+./zig-out/bin/binius_bitpack
+./zig-out/bin/binius_rangecmp
 ```
 
-All four prove a statement, verify it, and reject a forged claim.
+All six prove a statement, verify it, and reject a forged claim.
 
 ## Soundness of the committed protocol
 
