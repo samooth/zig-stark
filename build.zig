@@ -127,6 +127,19 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(bitpack_example);
 
+    const rangecmp_example = b.addExecutable(.{
+        .name = "binius_rangecmp",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/binius_rangecmp/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
+        }),
+    });
+    b.installArtifact(rangecmp_example);
+
     // Benchmarks
     const bench_ntt = b.addExecutable(.{
         .name = "bench_ntt",
