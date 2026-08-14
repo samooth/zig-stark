@@ -1,5 +1,6 @@
 const std = @import("std");
 const Polynomial = @import("polynomial.zig");
+const Pool = @import("../core/pool.zig").Pool;
 
 /// Sum-check protocol over a binary field `F` for the claim
 ///
@@ -209,6 +210,31 @@ pub fn Sumcheck(comptime F: type) type {
             terms: []const Term,
             seed: ?[]const u8,
         ) !Proof {
+            return proveCombinationWith(allocator, k, tables, terms, seed, null);
+        }
+
+        /// Same prover, with the per-round hypercube sums spread across a worker
+        /// pool (`core.pool.Pool`). The allocator must be thread-safe during the
+        /// joined sections.
+        pub fn proveCombinationParallel(
+            allocator: std.mem.Allocator,
+            k: usize,
+            tables: []const []const F,
+            terms: []const Term,
+            seed: ?[]const u8,
+            pool: *const Pool,
+        ) !Proof {
+            return proveCombinationWith(allocator, k, tables, terms, seed, pool);
+        }
+
+        fn proveCombinationWith(
+            allocator: std.mem.Allocator,
+            k: usize,
+            tables: []const []const F,
+            terms: []const Term,
+            seed: ?[]const u8,
+            pool: ?*const Pool,
+        ) !Proof {
             const n = @as(usize, 1) << @intCast(k);
             for (tables) |t| std.debug.assert(t.len == n);
             var dmax: usize = 0;
@@ -241,21 +267,80 @@ pub fn Sumcheck(comptime F: type) type {
                 defer allocator.free(points);
                 const values = try allocator.alloc(F, dmax + 1);
                 defer allocator.free(values);
-                for (0..dmax + 1) |t| {
-                    points[t] = F.fromInt(t);
-                    var s = F.zero();
-                    for (0..half) |rest| {
-                        for (terms) |tm| {
-                            var prod = tm.coeff;
-                            for (tm.indices) |ti| {
-                                const a = cur[ti][2 * rest];
-                                const b = cur[ti][2 * rest + 1];
-                                prod = prod.mul(a.add(points[t].mul(a.add(b))));
-                            }
-                            s = s.add(prod);
-                        }
+                for (0..dmax + 1) |t| points[t] = F.fromInt(t);
+
+                if (pool) |p| {
+                    // Parallel: each worker accumulates the contribution of its
+                    // slice of `rest` positions into a private partial[t] array,
+                    // reduced afterwards.
+                    const nw = @min(p.num_workers, half);
+                    const partials = try allocator.alloc([]F, nw);
+                    defer {
+                        for (partials) |pt| allocator.free(pt);
+                        allocator.free(partials);
                     }
-                    values[t] = s;
+                    for (partials) |*pt| {
+                        pt.* = try allocator.alloc(F, dmax + 1);
+                        @memset(pt.*, F.zero());
+                    }
+                    const chunk = (half + nw - 1) / nw;
+                    const Ctx = struct {
+                        partials: [][]F,
+                        chunk: usize,
+                        cur: []const []const F,
+                        terms: []const Term,
+                        points: []const F,
+                        dmax: usize,
+
+                        fn one(self: *@This(), rest: usize) void {
+                            const w = @min(rest / self.chunk, self.partials.len - 1);
+                            const pt = self.partials[w];
+                            const c = self.cur;
+                            for (0..self.dmax + 1) |t| {
+                                var s = F.zero();
+                                for (self.terms) |tm| {
+                                    var prod = tm.coeff;
+                                    for (tm.indices) |ti| {
+                                        const a = c[ti][2 * rest];
+                                        const b = c[ti][2 * rest + 1];
+                                        prod = prod.mul(a.add(self.points[t].mul(a.add(b))));
+                                    }
+                                    s = s.add(prod);
+                                }
+                                pt[t] = pt[t].add(s);
+                            }
+                        }
+                    };
+                    var ctx = Ctx{
+                        .partials = partials,
+                        .chunk = chunk,
+                        .cur = cur,
+                        .terms = terms,
+                        .points = points,
+                        .dmax = dmax,
+                    };
+                    p.parallelFor(Ctx, &ctx, half, Ctx.one);
+                    for (0..dmax + 1) |t| {
+                        var s = F.zero();
+                        for (partials) |pt| s = s.add(pt[t]);
+                        values[t] = s;
+                    }
+                } else {
+                    for (0..dmax + 1) |t| {
+                        var s = F.zero();
+                        for (0..half) |rest| {
+                            for (terms) |tm| {
+                                var prod = tm.coeff;
+                                for (tm.indices) |ti| {
+                                    const a = cur[ti][2 * rest];
+                                    const b = cur[ti][2 * rest + 1];
+                                    prod = prod.mul(a.add(points[t].mul(a.add(b))));
+                                }
+                                s = s.add(prod);
+                            }
+                        }
+                        values[t] = s;
+                    }
                 }
 
                 const coeffs = try interpolateCoeffs(allocator, points, values);

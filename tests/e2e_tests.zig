@@ -530,3 +530,39 @@ fn m31RoundTrip(trace_log: u8) !bool {
 test "e2e: M31 Fibonacci STARK proof survives serialization round-trip" {
     try std.testing.expect(try m31RoundTrip(6));
 }
+
+test "e2e: parallel prover matches sequential (4-bit adder batch)" {
+    const alloc = std.testing.allocator;
+
+    const F = zig_stark.binius.tower.Gf256;
+    const E = zig_stark.binius.tower.Gf2_128;
+    const Adder = zig_stark.binius.adder.Adder(F, E);
+    const Stark = zig_stark.binius.stark.BiniusStark(F, E);
+    const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F, E);
+    const Hash = zig_stark.hash.Hash;
+
+    const k = 4;
+    const n = @as(usize, 1) << @intCast(k);
+    const x = try alloc.alloc(u4, n);
+    defer alloc.free(x);
+    const y = try alloc.alloc(u4, n);
+    defer alloc.free(y);
+    for (0..n) |i| {
+        x[i] = @intCast((i * 3 + 5) % 16);
+        y[i] = @intCast((i * 7 + 2) % 16);
+    }
+    const columns = try Adder.generateWitness(alloc, x, y);
+    defer Adder.freeWitness(alloc, &columns);
+
+    var pool = zig_stark.core.pool.Pool.init(4);
+    var proof = try Stark.proveParallel(alloc, k, &columns, &Adder.constraints, &.{}, "", &pool);
+    defer proof.deinit(alloc);
+
+    var roots: [Adder.num_columns]Hash.Digest = undefined;
+    for (0..Adder.num_columns) |c| {
+        var tree = try CommittedPcs.commit(alloc, columns[c]);
+        defer tree.deinit();
+        roots[c] = tree.root();
+    }
+    try std.testing.expect(try Stark.verify(alloc, k, &roots, &Adder.constraints, &.{}, proof, ""));
+}

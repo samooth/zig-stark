@@ -125,6 +125,15 @@ Key types (`Stark.Constraint`, `Stark.Monomial`, `Stark.Pin`, `Stark.Proof`) are
 defined on each instantiation. `Proof` owns its memory and is released with
 `deinit(alloc)` using the allocator passed to `prove`.
 
+**Parallel prover.** `Stark.proveParallel(alloc, k, columns, constraints, pins,
+public_inputs, &pool)` runs the per-column commitments, the combined zero-check
+sum-check rounds, and the per-column eval openings across a
+`core.pool.Pool` (a fork-join executor over `std.Thread`; a no-op when
+`builtin.single_threaded`, so the same code compiles for wasm). The allocator
+must be thread-safe during the joined sections (`std.heap.DebugAllocator` and
+`std.heap.smp_allocator` are). The pool is created once and reused:
+`var pool = core.pool.Pool.init(std.Thread.getCpuCount() catch 4);`.
+
 ## Committed-MLE PCS backends
 
 Each backend exposes the same shape: `commit(alloc, table) !MerkleTree`,

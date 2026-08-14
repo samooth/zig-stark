@@ -30,6 +30,14 @@ breaking changes.
   `index.cjs`, `index.d.ts`) provides `proveColumns` / `verify` over the generic
   constraint interface; a Node smoke test proves+verifies a booleanity statement
   and rejects a tampered proof. Docs in `docs/api.md`.
+- **Parallel prover** (`core.pool.Pool`, `BiniusStarkWith.proveParallel`):
+  `src/core/pool.zig` is a small fork-join executor over `std.Thread.spawn` /
+  `join` (Zig 0.16 removed `std.Thread.Pool`) with a comptime single-threaded
+  fallback for wasm. `stark.zig`'s prover now parallelizes per-column
+  commitments, the combined zero-check sum-check rounds (per-position partials),
+  and per-column eval openings; `sumcheck.zig` gained
+  `proveCombinationParallel`. ~4x at 8 threads on an 8-core machine
+  (`zig build bench-binius`), leak-free, with an e2e round-trip test.
 
 - **CI** (`.github/workflows/ci.yml`): `zig build fmt`, `zig build`, and
   `zig build test` on every push/PR, on Zig 0.16.0 stable via

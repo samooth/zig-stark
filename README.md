@@ -27,7 +27,7 @@ Working end-to-end on both stacks:
 
 ```
 src/
-  core/         Field-agnostic primitives: hash (Blake3), merkle, channel, serialization, simd
+  core/         Field-agnostic primitives: hash (Blake3), merkle, channel, serialization, pool, simd
   m31/          M31 STARK stack: field tower, circle, ntt, air, poly, fri, stark
     field/      M31, CM31, QM31 field arithmetic + SIMD helpers
     circle/     Circle point group, domains, cosets
@@ -134,6 +134,25 @@ constraints), `F = Gf256`, soundness extension `E = Gf2_128`, eval-openings
 The eval-open section grows O(2^k·k) (it opens every hypercube entry per
 column); the polylog FRI-Binius PCS (`BiniusStarkFri`) replaces it with an
 O(polylog) proof (see the k = 4..6 proof-size e2e test).
+
+**Parallel prover** (`Stark.proveParallel`): the per-column commitments, the
+combined zero-check sum-check rounds, and the per-column eval openings run
+across a worker pool (`core.pool.Pool`, `zig build bench-binius`):
+
+```
+parallel prove scaling (4-bit adder, k=7, extension Gf2_128):
+  threads     prove_ms  speedup
+        1       287.80    1.00x
+        2       166.26     1.73x
+        4        96.67     2.98x
+        8        72.47     3.97x
+       16        77.81     3.70x
+```
+
+8 cores saturate (the 5800H has 8 physical cores); the remaining sequential
+transcript/interpolation work caps further gains. The allocator used with
+`proveParallel` must be thread-safe (e.g. `std.heap.DebugAllocator` or
+`std.heap.smp_allocator`).
 
 ## Releases
 

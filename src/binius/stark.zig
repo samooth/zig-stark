@@ -5,6 +5,7 @@ const FriPcsMod = @import("fripcs.zig");
 const BatchPcsMod = @import("batchpcs.zig");
 const CoreHash = @import("../core/hash/hash.zig");
 const Channel = @import("../core/channel/channel.zig").Channel;
+const Pool = @import("../core/pool.zig").Pool;
 
 /// Binius STARK over a binary field `F` (the witness/base field) with the
 /// protocol run over the extension field `E` (take `E = F` for the plain
@@ -304,7 +305,8 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
         /// Prover: commit the witness columns, derive τ and α_t from the
         /// transcript (public inputs + pins + roots), run a single combined
         /// zero-check sum-check over the user and pin constraints, and open
-        /// each distinct factor column once at the challenge point.
+        /// each distinct factor column once at the challenge point. Runs
+        /// single-threaded.
         pub fn prove(
             allocator: std.mem.Allocator,
             k: usize,
@@ -312,6 +314,34 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
             constraints: []const Constraint,
             pins: []const Pin,
             public_inputs: []const u8,
+        ) !Proof {
+            return proveImpl(allocator, k, columns, constraints, pins, public_inputs, null);
+        }
+
+        /// Same prover, but the per-column commitments and the per-column PCS
+        /// eval openings run across a worker pool (`core.pool.Pool`). The
+        /// allocator must be thread-safe during those sections (the shared
+        /// allocator is only used inside the joined regions).
+        pub fn proveParallel(
+            allocator: std.mem.Allocator,
+            k: usize,
+            columns: []const []const F,
+            constraints: []const Constraint,
+            pins: []const Pin,
+            public_inputs: []const u8,
+            pool: *const Pool,
+        ) !Proof {
+            return proveImpl(allocator, k, columns, constraints, pins, public_inputs, pool);
+        }
+
+        fn proveImpl(
+            allocator: std.mem.Allocator,
+            k: usize,
+            columns: []const []const F,
+            constraints: []const Constraint,
+            pins: []const Pin,
+            public_inputs: []const u8,
+            pool: ?*const Pool,
         ) !Proof {
             const m = columns.len;
             const n = @as(usize, 1) << @intCast(k);
@@ -323,10 +353,33 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
 
             const roots = try allocator.alloc(Hash.Digest, m);
             defer allocator.free(roots);
-            for (0..m) |j| {
-                var tree = try CP.commit(allocator, columns[j]);
-                defer tree.deinit();
-                roots[j] = tree.root();
+            if (pool) |p| {
+                const CommitCtx = struct {
+                    allocator: std.mem.Allocator,
+                    columns: []const []const F,
+                    roots: []Hash.Digest,
+                    failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+                    err: ?anyerror = null,
+
+                    fn one(self: *@This(), j: usize) void {
+                        var tree = CP.commit(self.allocator, self.columns[j]) catch |e| {
+                            if (!self.failed.swap(true, .acq_rel)) self.err = e;
+                            return;
+                        };
+                        defer tree.deinit();
+                        if (self.failed.load(.monotonic)) return;
+                        self.roots[j] = tree.root();
+                    }
+                };
+                var cctx = CommitCtx{ .allocator = allocator, .columns = columns, .roots = roots };
+                p.parallelFor(CommitCtx, &cctx, m, CommitCtx.one);
+                if (cctx.failed.load(.monotonic)) return cctx.err orelse error.PoolWorkerFailed;
+            } else {
+                for (0..m) |j| {
+                    var tree = try CP.commit(allocator, columns[j]);
+                    defer tree.deinit();
+                    roots[j] = tree.root();
+                }
             }
             const rsl = roots[0..m];
 
@@ -410,7 +463,10 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
                 allocator.free(terms);
             }
 
-            const sp = try SC.proveCombination(allocator, k, tables, terms, &seed);
+            const sp = if (pool) |p|
+                try SC.proveCombinationParallel(allocator, k, tables, terms, &seed, p)
+            else
+                try SC.proveCombination(allocator, k, tables, terms, &seed);
             const rr = (try SC.runRounds(allocator, &seed, sp.claimed_sum, sp.rounds)) orelse return error.Sumcheck;
             defer allocator.free(rr.challenges);
 
@@ -449,9 +505,55 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
 
             const evals = try allocator.alloc(EvalProof, count);
             errdefer allocator.free(evals);
-            for (0..count) |l| {
-                const e = try CP.proveEval(allocator, k, columns[distinct[l]], rr.challenges);
-                evals[l] = .{ .value = e.value, .pcs = e };
+            if (pool) |p| {
+                const written = try allocator.alloc(bool, count);
+                defer allocator.free(written);
+                @memset(written, false);
+                const EvalCtx = struct {
+                    allocator: std.mem.Allocator,
+                    k: usize,
+                    columns: []const []const F,
+                    distinct: []const usize,
+                    challenges: []const E,
+                    evals: []EvalProof,
+                    written: []bool,
+                    failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+                    err: ?anyerror = null,
+
+                    fn one(self: *@This(), l: usize) void {
+                        var e = CP.proveEval(self.allocator, self.k, self.columns[self.distinct[l]], self.challenges) catch |err| {
+                            if (!self.failed.swap(true, .acq_rel)) self.err = err;
+                            return;
+                        };
+                        if (self.failed.load(.monotonic)) {
+                            e.deinit(self.allocator);
+                            return;
+                        }
+                        self.evals[l] = .{ .value = e.value, .pcs = e };
+                        self.written[l] = true;
+                    }
+                };
+                var ectx = EvalCtx{
+                    .allocator = allocator,
+                    .k = k,
+                    .columns = columns,
+                    .distinct = distinct[0..count],
+                    .challenges = rr.challenges,
+                    .evals = evals,
+                    .written = written,
+                };
+                p.parallelFor(EvalCtx, &ectx, count, EvalCtx.one);
+                if (ectx.failed.load(.monotonic)) {
+                    for (0..count) |l| {
+                        if (written[l]) ectx.evals[l].pcs.deinit(allocator);
+                    }
+                    return ectx.err orelse error.PoolWorkerFailed;
+                }
+            } else {
+                for (0..count) |l| {
+                    const e = try CP.proveEval(allocator, k, columns[distinct[l]], rr.challenges);
+                    evals[l] = .{ .value = e.value, .pcs = e };
+                }
             }
 
             return .{ .sumcheck = sp, .evals = evals };

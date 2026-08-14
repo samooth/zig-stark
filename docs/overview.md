@@ -49,7 +49,7 @@ The source tree is split into three modules, re-exported by `src/root.zig`:
 ```
 src/
   root.zig      Module namespaces (core, m31, binius)
-  core/         Field-agnostic: hash, merkle, channel, serialization, bit_utils, simd
+  core/         Field-agnostic: hash, merkle, channel, serialization, pool, bit_utils, simd
   m31/
     field/      M31, CM31, QM31 arithmetic (+ SIMD helpers)
     circle/     Circle point group, domains, cosets

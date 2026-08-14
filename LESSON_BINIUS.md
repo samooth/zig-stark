@@ -337,3 +337,27 @@ coefficient `f(r)/d`.
   once) halves the leaves, the Blake3 calls, and the per-query Merkle paths
   (`LayerProof` goes from `path0`/`path1` to one `path`). The verifier hashes
   the pair the same way, so a single `MerkleVerify` authenticates both values.
+
+## Parallel prover (core.pool.Pool)
+
+- Zig 0.16 removed `std.Thread.Pool`; a minimal fork-join `core.pool.Pool`
+  rolls one: `parallelFor(Ctx, ctx, count, func)` spawns up to `num_workers`
+  threads over contiguous chunks and joins. `std.Thread.spawn(config,
+  comptime fn, args_tuple)` needs a *tuple* of args (not a struct) and a
+  comptime-known function; the worker is a static method of a comptime
+  anonymous struct so it can reference the outer comptime `func` (a plain
+  nested `fn` cannot capture it). `spawn` returns `SpawnError!Thread`;
+  failures fall back to running the chunk inline. `join` is `void`.
+- The pool is a no-op when `builtin.single_threaded` or `num_workers <= 1`, so
+  the identical code path compiles and runs on wasm single-thread builds
+  (browser parallelism comes from Web Workers instead).
+- `func` must not return an error: capture failures in the context with an
+  atomic `failed` flag (only the first failure writes `ctx.err`, so there is no
+  data race) and check after the call. On failure, cleanup uses a `written[]`
+  bool array so already-created nested proofs are deinit'ed exactly once.
+- Where the time goes: the combined zero-check sum-check (all columns × all
+  rounds × the hypercube) dominates `prove`, so parallelizing only commit+eval
+  gave ~1.3x; parallelizing the per-round sums over `rest` positions (per-worker
+  partial[t] arrays, reduced after) is what unlocks ~4x at 8 cores. The
+  allocator must be thread-safe inside the joined sections (DebugAllocator /
+  smp_allocator).

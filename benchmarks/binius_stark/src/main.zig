@@ -80,4 +80,45 @@ pub fn main() !void {
     try runField(Gf16, Gf16, alloc, rnd);
     try runField(Gf256, Gf256, alloc, rnd);
     try runField(Gf256, binius.tower.Gf2_128, alloc, rnd);
+    try runScaling(alloc, rnd);
+}
+
+fn runScaling(alloc: std.mem.Allocator, rnd: std.Random) !void {
+    const F = Gf256;
+    const E = binius.tower.Gf2_128;
+    const Adder = binius.adder.Adder(F, E);
+    const Stark = binius.stark.BiniusStark(F, E);
+
+    const k = 7;
+    const n: usize = @as(usize, 1) << @intCast(k);
+    const x = try alloc.alloc(u4, n);
+    defer alloc.free(x);
+    const y = try alloc.alloc(u4, n);
+    defer alloc.free(y);
+    for (0..n) |i| {
+        x[i] = @intCast(rnd.uintLessThan(u8, 16));
+        y[i] = @intCast(rnd.uintLessThan(u8, 16));
+    }
+    const columns = try Adder.generateWitness(alloc, x, y);
+    defer Adder.freeWitness(alloc, &columns);
+
+    std.debug.print("\nparallel prove scaling (4-bit adder, k={d}, extension Gf2_128):\n", .{k});
+    std.debug.print("  {s:>7} {s:>12} {s:>8}\n", .{ "threads", "prove_ms", "speedup" });
+
+    const t_base = now();
+    {
+        var proof = try Stark.prove(alloc, k, &columns, &Adder.constraints, &.{}, "");
+        defer proof.deinit(alloc);
+    }
+    const base_ms: f64 = @as(f64, @floatFromInt(now() - t_base)) / @as(f64, @floatFromInt(std.time.ns_per_ms));
+    std.debug.print("  {d:>7} {d:>12.2} {s:>8}\n", .{ 1, base_ms, "1.00x" });
+
+    for ([_]usize{ 2, 4, 8, 16 }) |threads| {
+        var pool = zig_stark.core.pool.Pool.init(threads);
+        const t0 = now();
+        var proof = try Stark.proveParallel(alloc, k, &columns, &Adder.constraints, &.{}, "", &pool);
+        defer proof.deinit(alloc);
+        const ms: f64 = @as(f64, @floatFromInt(now() - t0)) / @as(f64, @floatFromInt(std.time.ns_per_ms));
+        std.debug.print("  {d:>7} {d:>12.2} {d:>8.2}x\n", .{ threads, ms, base_ms / ms });
+    }
 }
