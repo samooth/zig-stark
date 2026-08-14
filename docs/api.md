@@ -225,3 +225,24 @@ each module instance grows; for long-running processes re-instantiate the
 module or provide a reclaiming allocator. In the browser, run one module
 instance per **Web Worker** to parallelize provers without
 `SharedArrayBuffer`.
+
+**Native N-API addon (Node.js).** `bindings/node/addon.zig` exposes the same
+API as the wasm binding but as a native `.node` addon (native speed, and the
+optional `proveParallel` pool is available on the Zig side):
+
+```sh
+zig build node-addon -Doptimize=ReleaseFast \
+  -Dnapi-include=$HOME/.nvm/versions/node/v24.14.0/include/node
+```
+
+```js
+const addon = require('./zig-out/lib/addon.node');
+const { proof, roots } = addon.proveColumns(k, cols, cons, pins, '');
+const ok = addon.verify(k, roots, cons, pins, proof, ''); // true
+```
+
+Inputs are the same serialized wire-format buffers as `bindings/js/`
+(`encodeColumns` / `encodeConstraints` / `encodePins`), so the same
+statement-building code drives either backend. `proveColumns` returns
+`{ proof: Buffer, roots: Buffer }`; `verify` returns a boolean. A smoke test
+lives in `bindings/node/test/smoke.mjs`.

@@ -38,6 +38,13 @@ breaking changes.
   and per-column eval openings; `sumcheck.zig` gained
   `proveCombinationParallel`. ~4x at 8 threads on an 8-core machine
   (`zig build bench-binius`), leak-free, with an e2e round-trip test.
+- **Node.js N-API addon** (`bindings/node/addon.zig`, `zig build node-addon`):
+  a native `.node` addon exposing `proveColumns` / `verify` with the same
+  serialized wire-format inputs as the wasm binding (plus a `version` helper).
+  It reuses the C ABI (`zs_binius_prove` / `zs_binius_verify` / a new native
+  `zs_binius_commit`) with a per-call arena-backed host allocator; the addon's
+  `Host` avoids a dangling-allocator bug by rebuilding the arena allocator per
+  callback. Smoke test in `bindings/node/test/smoke.mjs`.
 
 - **CI** (`.github/workflows/ci.yml`): `zig build fmt`, `zig build`, and
   `zig build test` on every push/PR, on Zig 0.16.0 stable via
