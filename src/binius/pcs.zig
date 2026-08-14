@@ -214,15 +214,22 @@ pub fn CommittedMlePcs(comptime F: type, comptime E: type) type {
             value: E,
             sumcheck: SC.Proof,
             /// The 2^k opened leaves (the evaluation table) and one Merkle
-            /// path per leaf, both indexed by the hypercube point. `entries`
-            /// borrows the prover's table and is not freed here.
+            /// path per leaf, both indexed by the hypercube point. The prover
+            /// borrows `entries` (it aliases the committed table); a proof
+            /// produced by `deserialize` owns its copy instead, signaled by
+            /// `owns_entries`.
             entries: []const F,
             paths: [][]Hash.Digest,
+            /// Whether `entries` is owned (deserialized proof) or borrowed
+            /// (prover-produced). Skipped by the wire format; the serializer
+            /// sets it for reconstructed proofs.
+            owns_entries: bool = false,
 
             pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
                 self.sumcheck.deinit(allocator);
                 for (self.paths) |p| allocator.free(p);
                 allocator.free(self.paths);
+                if (self.owns_entries) allocator.free(self.entries);
             }
         };
 

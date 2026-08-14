@@ -5,6 +5,7 @@ const stark = zig_stark.stark;
 const channel = zig_stark.channel;
 const qm31 = zig_stark.qm31;
 const QM31 = qm31.QM31;
+const ser = zig_stark.core.serialization;
 
 fn roundTrip(trace_log: u8, tampered_claim: bool) !bool {
     const alloc = std.testing.allocator;
@@ -313,4 +314,219 @@ test "e2e: BiniusArg FRI PCS proof size is sub-linear vs committed-MLE (k = 4..6
     // FRI wins by k = 6: the committed-MLE proof grows O(2^k · k) in
     // entries+paths, the FRI one polynomially in k·queries.
     try std.testing.expect(prev_fri < cm_last);
+}
+
+// ---------------------------------------------------------------------------
+// Proof serialization round-trips: serialize -> deserialize -> verify. A
+// deserialized proof must be byte-identical in behavior (verifier accepts) and
+// own its memory (deinit is leak-free).
+// ---------------------------------------------------------------------------
+
+fn biniusRoundTrip(tamper: bool) !bool {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const F = zig_stark.binius.tower.Gf256;
+    const E = zig_stark.binius.tower.Gf2_128;
+    const Adder = zig_stark.binius.adder.Adder(F, E);
+    const Stark = zig_stark.binius.stark.BiniusStark(F, E);
+    const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F, E);
+    const Hash = zig_stark.hash.Hash;
+
+    const k = 3;
+    const n = @as(usize, 1) << @intCast(k);
+    const x = try alloc.alloc(u4, n);
+    const y = try alloc.alloc(u4, n);
+    for (0..n) |i| {
+        x[i] = @intCast((i * 3 + 5) % 16);
+        y[i] = @intCast((i * 7 + 2) % 16);
+    }
+
+    const columns = try Adder.generateWitness(alloc, x, y);
+    var proof = try Stark.prove(alloc, k, &columns, &Adder.constraints, &.{}, "");
+    defer proof.deinit(alloc);
+
+    if (tamper) {
+        // Flip one committed bit before serializing: the deserialized proof
+        // still verifies against the tampered roots only if the roots match
+        // the *tampered* witness — the round trip must not change rejection.
+        var bad: [Adder.num_columns][]F = undefined;
+        for (0..Adder.num_columns) |c| bad[c] = try alloc.dupe(F, columns[c]);
+        bad[Adder.colS(1)][3] = bad[Adder.colS(1)][3].add(F.one());
+        var bad_roots: [Adder.num_columns]Hash.Digest = undefined;
+        for (0..Adder.num_columns) |c| {
+            var tree = try CommittedPcs.commit(alloc, bad[c]);
+            bad_roots[c] = tree.root();
+        }
+        return try Stark.verify(alloc, k, &bad_roots, &Adder.constraints, &.{}, proof, "");
+    }
+
+    var roots: [Adder.num_columns]Hash.Digest = undefined;
+    for (0..Adder.num_columns) |c| {
+        var tree = try CommittedPcs.commit(alloc, columns[c]);
+        roots[c] = tree.root();
+    }
+    // Round-trip the proof, then verify with the *deserialized* copy.
+    const bytes = try ser.serialize(alloc, proof);
+    defer alloc.free(bytes);
+    var rt = try ser.deserialize(alloc, bytes, Stark.Proof);
+    defer rt.deinit(alloc);
+    return try Stark.verify(alloc, k, &roots, &Adder.constraints, &.{}, rt, "");
+}
+
+test "e2e: Binius STARK proof (CommittedMlePcs) survives serialization round-trip" {
+    try std.testing.expect(try biniusRoundTrip(false));
+}
+
+test "e2e: Binius STARK proof round-trip preserves tamper rejection" {
+    try std.testing.expect(!try biniusRoundTrip(true));
+}
+
+fn biniusFriRoundTrip(tamper: bool) !bool {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // Single-field Gf256 keeps the FRI sum-check fast in Debug.
+    const F = zig_stark.binius.tower.Gf256;
+    const E = zig_stark.binius.tower.Gf256;
+    const BatchPcs = zig_stark.binius.batchpcs.BatchFriPcsStark(F, E, 2, 4);
+    const Adder = zig_stark.binius.adder.AdderWith(F, E, BatchPcs);
+    const Stark = zig_stark.binius.stark.BiniusStarkFri(F, E, 2, 4);
+    const Hash = zig_stark.hash.Hash;
+
+    const k = 3;
+    const n = @as(usize, 1) << @intCast(k);
+    const x = try alloc.alloc(u4, n);
+    const y = try alloc.alloc(u4, n);
+    for (0..n) |i| {
+        x[i] = @intCast((i * 3 + 5) % 16);
+        y[i] = @intCast((i * 7 + 2) % 16);
+    }
+
+    const columns = try Adder.generateWitness(alloc, x, y);
+    var proof = try Stark.prove(alloc, k, &columns, &Adder.constraints, &.{}, "");
+    defer proof.deinit(alloc);
+
+    if (tamper) {
+        var bad: [Adder.num_columns][]F = undefined;
+        for (0..Adder.num_columns) |c| bad[c] = try alloc.dupe(F, columns[c]);
+        bad[Adder.colS(1)][3] = bad[Adder.colS(1)][3].add(F.one());
+        var bad_roots: [Adder.num_columns]Hash.Digest = undefined;
+        for (0..Adder.num_columns) |c| {
+            var tree = try BatchPcs.commit(alloc, bad[c]);
+            bad_roots[c] = tree.root();
+        }
+        return try Stark.verify(alloc, k, &bad_roots, &Adder.constraints, &.{}, proof, "");
+    }
+
+    var roots: [Adder.num_columns]Hash.Digest = undefined;
+    for (0..Adder.num_columns) |c| {
+        var tree = try BatchPcs.commit(alloc, columns[c]);
+        roots[c] = tree.root();
+    }
+    const bytes = try ser.serialize(alloc, proof);
+    defer alloc.free(bytes);
+    var rt = try ser.deserialize(alloc, bytes, Stark.Proof);
+    defer rt.deinit(alloc);
+    return try Stark.verify(alloc, k, &roots, &Adder.constraints, &.{}, rt, "");
+}
+
+test "e2e: Binius FRI STARK proof (BatchFriPcs) survives serialization round-trip" {
+    try std.testing.expect(try biniusFriRoundTrip(false));
+}
+
+test "e2e: Binius FRI STARK proof round-trip preserves tamper rejection" {
+    try std.testing.expect(!try biniusFriRoundTrip(true));
+}
+
+fn biniusArgRoundTrip() !bool {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const F = zig_stark.binius.tower.Gf256;
+    const E = zig_stark.binius.tower.Gf256;
+    const ArgFri = zig_stark.binius.arg.BiniusArgFri(F, E, 2, 4);
+    const ArgCm = zig_stark.binius.arg.BiniusArgWith(F, E, zig_stark.binius.pcs.CommittedMlePcs(F, E));
+
+    const k = 3;
+    const n = @as(usize, 1) << @intCast(k);
+    var t0: [64]F = undefined;
+    var t1: [64]F = undefined;
+    for (0..n) |i| {
+        t0[i] = F.fromInt((i * 7 + 3) % 256);
+        t1[i] = F.fromInt((i * 3 + 11) % 256);
+    }
+    const tables = [_][]const F{ t0[0..n], t1[0..n] };
+
+    const pf = try ArgFri.prove(alloc, k, &tables);
+    const pc = try ArgCm.prove(alloc, k, &tables);
+
+    var roots: [2]zig_stark.hash.Hash.Digest = undefined;
+    {
+        var tree0 = try zig_stark.binius.fripcs.FriPcs(F, E, 2, 4).commit(alloc, t0[0..n]);
+        var tree1 = try zig_stark.binius.fripcs.FriPcs(F, E, 2, 4).commit(alloc, t1[0..n]);
+        roots[0] = tree0.root();
+        roots[1] = tree1.root();
+    }
+    var roots_cm: [2]zig_stark.hash.Hash.Digest = undefined;
+    {
+        var tree0 = try zig_stark.binius.pcs.CommittedMlePcs(F, E).commit(alloc, t0[0..n]);
+        var tree1 = try zig_stark.binius.pcs.CommittedMlePcs(F, E).commit(alloc, t1[0..n]);
+        roots_cm[0] = tree0.root();
+        roots_cm[1] = tree1.root();
+    }
+
+    const bf = try ser.serialize(alloc, pf);
+    defer alloc.free(bf);
+    var rt_fri = try ser.deserialize(alloc, bf, ArgFri.Proof);
+    defer rt_fri.deinit(alloc);
+    const ok_fri = try ArgFri.verify(alloc, k, &roots, pc.claimed_sum, rt_fri);
+
+    const bc = try ser.serialize(alloc, pc);
+    defer alloc.free(bc);
+    var rt_cm = try ser.deserialize(alloc, bc, ArgCm.Proof);
+    defer rt_cm.deinit(alloc);
+    const ok_cm = try ArgCm.verify(alloc, k, &roots_cm, pc.claimed_sum, rt_cm);
+
+    return ok_fri and ok_cm;
+}
+
+test "e2e: BiniusArg proofs (FriPcs + CommittedMlePcs) survive serialization round-trip" {
+    try std.testing.expect(try biniusArgRoundTrip());
+}
+
+fn m31RoundTrip(trace_log: u8) !bool {
+    const alloc = std.testing.allocator;
+    const params = stark.StarkParams{
+        .trace_log = trace_log,
+        .log_blowup = 3,
+        .num_queries = 16,
+        .remainder_log = 3,
+    };
+    const n = params.traceLen();
+
+    const trace = try stark.FibAir.generateTrace(alloc, n);
+    defer stark.FibAir.freeTrace(alloc, trace);
+    const claimed = trace[0][n - 1];
+
+    const Stark = stark.GenericStark(stark.FibAir);
+
+    var pchan = channel.Channel.init("zig-stark:e2e-ser");
+    var proof = try Stark.prove(alloc, params, .{ .claimed_fib = claimed }, trace, &pchan);
+    defer proof.deinit();
+
+    const bytes = try ser.serialize(alloc, proof);
+    defer alloc.free(bytes);
+    var rt = try ser.deserialize(alloc, bytes, Stark.Proof);
+    defer rt.deinit();
+
+    var vchan = channel.Channel.init("zig-stark:e2e-ser");
+    return try Stark.verify(alloc, params, .{ .claimed_fib = claimed }, &rt, &vchan);
+}
+
+test "e2e: M31 Fibonacci STARK proof survives serialization round-trip" {
+    try std.testing.expect(try m31RoundTrip(6));
 }
