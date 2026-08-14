@@ -62,6 +62,7 @@ examples/
   binius_rangecmp/ Binius STARK proving a bounded strictly-increasing sequence
 tests/          End-to-end tests
 benchmarks/     NTT / circle-FFT / Binius-STARK benchmarks (zig build bench[-binius])
+bindings/       C ABI (zig-capi.h) + JS/WebAssembly binding (bindings/js)
 ```
 
 Modules are exported via `src/root.zig` (`core`, `m31`, `binius` namespaces), so library consumers can depend on the field-agnostic primitives without pulling in the M31 tower.

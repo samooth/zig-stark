@@ -22,6 +22,14 @@ breaking changes.
   than a witness tamper, which the zero-check can miss in a small field.)
 - **CI jobs**: wasm C-ABI build and the gadget fuzz, plus the existing suite now
   also runs in ReleaseFast.
+- **JS/WebAssembly binding** (`bindings/js/`, `zig build wasm`): a
+  `wasm32-freestanding` module that imports host `zig_stark_malloc`/`free` and
+  exposes `zs_binius_prove_wm` / `zs_binius_verify_wm` / `zs_binius_commit_wm` /
+  `zs_free_wm` (the wire format pins `usize` to 8 bytes, so it is portable
+  across 32/64-bit targets). The ESM/CJS/TypeScript wrapper (`index.mjs`,
+  `index.cjs`, `index.d.ts`) provides `proveColumns` / `verify` over the generic
+  constraint interface; a Node smoke test proves+verifies a booleanity statement
+  and rejects a tampered proof. Docs in `docs/api.md`.
 
 - **CI** (`.github/workflows/ci.yml`): `zig build fmt`, `zig build`, and
   `zig build test` on every push/PR, on Zig 0.16.0 stable via

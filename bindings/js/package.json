@@ -1,0 +1,23 @@
+{
+  "name": "zig-stark",
+  "version": "0.2.0",
+  "description": "Binius zero-check STARK wasm binding (prove/verify over the generic constraint interface)",
+  "type": "module",
+  "main": "./index.cjs",
+  "module": "./index.mjs",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "require": "./index.cjs"
+    }
+  },
+  "files": [
+    "index.mjs",
+    "index.cjs",
+    "index.d.ts",
+    "zig_stark_capi.wasm"
+  ],
+  "license": "Apache-2.0"
+}

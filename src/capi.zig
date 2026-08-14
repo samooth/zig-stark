@@ -24,6 +24,7 @@
 //! -3 out of memory, -4 protocol error (prove/verify failed).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Ser = @import("core/serialization.zig");
 const Hash = @import("core/hash/hash.zig").Hash;
 const F = @import("binius/tower.zig").Gf256;
@@ -35,7 +36,7 @@ const Error = error{ InvalidInput, OutOfMemory, Protocol };
 fn errCode(err: anyerror) c_int {
     return switch (err) {
         error.OutOfMemory => -3,
-        error.InvalidInput => -2,
+        error.InvalidInput, error.TrailingBytes, error.UnexpectedEnd => -2,
         error.Protocol => -4,
         else => -1,
     };
@@ -240,6 +241,153 @@ pub export fn zs_free(host: HostAllocator, ptr: ?[*]u8, len: usize) callconv(.c)
 /// Version / configuration string of this ABI instantiation.
 pub export fn zs_version() callconv(.c) [*:0]const u8 {
     return "zig-stark 0.2.0 binius capi (Gf256/Gf2_128/CommittedMlePcs)";
+}
+
+// ---------------------------------------------------------------------------
+// wasm path: host-provided malloc/free (imported). JS supplies these over the
+// module's linear memory, so no HostAllocator fn-pointer struct is needed.
+// ---------------------------------------------------------------------------
+
+extern fn zig_stark_malloc(size: usize) ?[*]u8;
+extern fn zig_stark_free(ptr: [*]u8, size: usize) void;
+
+/// On wasm the externs are host imports; on other targets they are never
+/// referenced (comptime-eliminated), so the native link stays clean.
+fn importedMalloc(size: usize) ?[*]u8 {
+    if (comptime builtin.cpu.arch == .wasm32) return zig_stark_malloc(size);
+    @panic("_wm path is wasm-only");
+}
+
+fn importedFree(ptr: [*]u8, size: usize) void {
+    if (comptime builtin.cpu.arch == .wasm32) {
+        zig_stark_free(ptr, size);
+        return;
+    }
+    @panic("_wm path is wasm-only");
+}
+
+fn importedAllocImpl(ctx: *anyopaque, n: usize, alignment: std.mem.Alignment, ra: usize) ?[*]u8 {
+    _ = ctx;
+    _ = ra;
+    const min_bytes = @max(alignment.toByteUnits(), @alignOf(Header));
+    const pad = min_bytes - 1;
+    const total = @sizeOf(Header) + pad + n;
+    const base = importedMalloc(total) orelse return null;
+    const base_addr: usize = @intFromPtr(base);
+    const payload_addr = std.mem.alignForward(usize, base_addr + @sizeOf(Header), min_bytes);
+    const header_ptr: *Header = @ptrFromInt(payload_addr - @sizeOf(Header));
+    header_ptr.* = .{ .orig = base_addr, .size = total };
+    return @ptrFromInt(payload_addr);
+}
+
+fn importedFreeImpl(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ra: usize) void {
+    _ = ctx;
+    _ = alignment;
+    _ = ra;
+    const addr: usize = @intFromPtr(memory.ptr);
+    const header_ptr: *Header = @ptrFromInt(addr - @sizeOf(Header));
+    const h = header_ptr.*;
+    importedFree(@ptrFromInt(h.orig), h.size);
+}
+
+fn makeImportedAllocator() std.mem.Allocator {
+    return .{
+        .ptr = @constCast(@as(*anyopaque, @ptrFromInt(@alignOf(usize)))),
+        .vtable = &.{
+            .alloc = importedAllocImpl,
+            .resize = resizeImpl,
+            .remap = remapImpl,
+            .free = importedFreeImpl,
+        },
+    };
+}
+
+pub export fn zs_binius_prove_wm(
+    k: u8,
+    columns_ptr: ?[*]const u8,
+    columns_len: usize,
+    constraints_ptr: ?[*]const u8,
+    constraints_len: usize,
+    pins_ptr: ?[*]const u8,
+    pins_len: usize,
+    domain_ptr: ?[*]const u8,
+    domain_len: usize,
+    out_proof: *[*]u8,
+    out_len: *usize,
+) callconv(.c) c_int {
+    const alloc = makeImportedAllocator();
+    const result = prove(
+        alloc,
+        k,
+        sliceOf(columns_ptr, columns_len),
+        sliceOf(constraints_ptr, constraints_len),
+        sliceOf(pins_ptr, pins_len),
+        sliceOf(domain_ptr, domain_len),
+    ) catch |err| return errCode(err);
+    out_proof.* = result.ptr;
+    out_len.* = result.len;
+    return 0;
+}
+
+pub export fn zs_binius_verify_wm(
+    k: u8,
+    roots_ptr: ?[*]const u8,
+    roots_len: usize,
+    constraints_ptr: ?[*]const u8,
+    constraints_len: usize,
+    pins_ptr: ?[*]const u8,
+    pins_len: usize,
+    proof_ptr: ?[*]const u8,
+    proof_len: usize,
+    domain_ptr: ?[*]const u8,
+    domain_len: usize,
+    out_ok: *bool,
+) callconv(.c) c_int {
+    const alloc = makeImportedAllocator();
+    const ok = verify(
+        alloc,
+        k,
+        sliceOf(roots_ptr, roots_len),
+        sliceOf(constraints_ptr, constraints_len),
+        sliceOf(pins_ptr, pins_len),
+        sliceOf(proof_ptr, proof_len),
+        sliceOf(domain_ptr, domain_len),
+    ) catch |err| return errCode(err);
+    out_ok.* = ok;
+    return 0;
+}
+
+pub export fn zs_free_wm(ptr: ?[*]u8, len: usize) callconv(.c) void {
+    if (ptr) |p| makeImportedAllocator().free(p[0..len]);
+}
+
+/// Commit the witness columns and return the serialized `[]const Hash.Digest`
+/// roots (one per column), allocated with the imported malloc/free.
+pub export fn zs_binius_commit_wm(
+    k: u8,
+    columns_ptr: ?[*]const u8,
+    columns_len: usize,
+    out_roots: *[*]u8,
+    out_len: *usize,
+) callconv(.c) c_int {
+    _ = k;
+    const alloc = makeImportedAllocator();
+    const columns = Ser.deserialize(alloc, sliceOf(columns_ptr, columns_len), []const []const F) catch |err| return errCode(err);
+    defer {
+        for (columns) |c| alloc.free(c);
+        alloc.free(columns);
+    }
+    const roots = alloc.alloc(Hash.Digest, columns.len) catch return -3;
+    defer alloc.free(roots);
+    for (0..columns.len) |c| {
+        var tree = @import("binius/pcs.zig").CommittedMlePcs(F, E).commit(alloc, columns[c]) catch return -3;
+        defer tree.deinit();
+        roots[c] = tree.root();
+    }
+    const bytes = Ser.serialize(alloc, roots) catch return -3;
+    out_roots.* = bytes.ptr;
+    out_len.* = bytes.len;
+    return 0;
 }
 
 // ---------------------------------------------------------------------------

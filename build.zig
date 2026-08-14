@@ -190,7 +190,8 @@ pub fn build(b: *std.Build) void {
     });
     capi_wasm.entry = .disabled; // pure export module, no _start
     capi_wasm.root_module.export_symbol_names = &.{
-        "zs_binius_prove", "zs_binius_verify", "zs_free", "zs_version",
+        "zs_binius_prove",    "zs_binius_verify",    "zs_free",    "zs_version",
+        "zs_binius_prove_wm", "zs_binius_verify_wm", "zs_free_wm", "zs_binius_commit_wm",
     };
     const install_wasm = b.addInstallArtifact(capi_wasm, .{ .dest_sub_path = "zig_stark_capi.wasm" });
     wasm_step.dependOn(&install_wasm.step);

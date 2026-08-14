@@ -61,9 +61,19 @@ fn writeValue(allocator: std.mem.Allocator, list: *std.ArrayList(u8), value: any
         .bool => try list.append(allocator, if (value) 1 else 0),
         .int => |i| {
             if (i.signedness == .signed) @compileError("signed integers are not serializable: " ++ @typeName(T));
+            if (T == usize) {
+                // `usize` is always 8 bytes on the wire regardless of the
+                // target pointer width (zero-extended), so the format is
+                // portable across 32/64-bit.
+                const v: u64 = value;
+                var tmp: [8]u8 = undefined;
+                inline for (0..8) |b| tmp[b] = @truncate(v >> @intCast(8 * b));
+                try list.appendSlice(allocator, &tmp);
+                return;
+            }
             const n_bytes = @divExact(i.bits, 8);
             var tmp: [n_bytes]u8 = undefined;
-            inline for (0..n_bytes) |b| tmp[b] = @truncate(value >> @as(u7, @intCast(8 * b)));
+            inline for (0..n_bytes) |b| tmp[b] = @truncate(value >> @intCast(8 * b));
             try list.appendSlice(allocator, &tmp);
         },
         .array => |a| {
@@ -114,6 +124,13 @@ fn readValue(cursor: *Cursor, allocator: std.mem.Allocator, result: anytype, com
         .bool => result.* = (try cursor.byte()) == 1,
         .int => |i| {
             if (i.signedness == .signed) @compileError("signed integers are not serializable: " ++ @typeName(T));
+            if (T == usize) {
+                const bytes = try cursor.take(8);
+                var v: u64 = 0;
+                inline for (0..8) |b| v |= @as(u64, bytes[b]) << @intCast(8 * b);
+                result.* = @intCast(v);
+                return;
+            }
             const n_bytes = @divExact(i.bits, 8);
             const bytes = try cursor.take(n_bytes);
             var v: T = 0;

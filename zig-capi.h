@@ -68,6 +68,29 @@ void zs_free(zs_host_allocator host, uint8_t *ptr, size_t len);
 /* Version / configuration string of this ABI instantiation. */
 const char *zs_version(void);
 
+/* ---- wasm-only variants ----------------------------------------------
+ * Built when targeting wasm32-freestanding (`zig build wasm`). They use two
+ * host-imported functions, `env.zig_stark_malloc(size) -> ptr` and
+ * `env.zig_stark_free(ptr, size)`, instead of the HostAllocator struct:
+ *
+ *   int32_t zs_binius_prove_wm(uint8_t k, const uint8_t *columns, size_t columns_len,
+ *       const uint8_t *constraints, size_t constraints_len,
+ *       const uint8_t *pins, size_t pins_len,
+ *       const uint8_t *domain, size_t domain_len,
+ *       uint8_t **out_proof, size_t *out_len);
+ *   int32_t zs_binius_verify_wm(uint8_t k, const uint8_t *roots, size_t roots_len,
+ *       const uint8_t *constraints, size_t constraints_len,
+ *       const uint8_t *pins, size_t pins_len,
+ *       const uint8_t *proof, size_t proof_len,
+ *       const uint8_t *domain, size_t domain_len, int *out_ok);
+ *   int32_t zs_binius_commit_wm(uint8_t k, const uint8_t *columns, size_t columns_len,
+ *       uint8_t **out_roots, size_t *out_len);
+ *   void    zs_free_wm(uint8_t *ptr, size_t len);
+ *
+ * Returned buffers are allocated with the imported malloc and released with
+ * zs_free_wm. See bindings/js/ for the reference JavaScript wrapper.
+ * --------------------------------------------------------------------- */
+
 #ifdef __cplusplus
 }
 #endif

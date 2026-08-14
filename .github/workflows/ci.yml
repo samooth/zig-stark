@@ -29,7 +29,7 @@ jobs:
         run: zig build test -Doptimize=ReleaseFast
 
   wasm:
-    name: wasm C ABI (wasm32-freestanding)
+    name: wasm C ABI (wasm32-freestanding) + Node smoke
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,8 +38,17 @@ jobs:
         with:
           version: 0.16.0
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Build the wasm C-ABI module
         run: zig build wasm -Doptimize=ReleaseSmall
+
+      - name: Refresh the packaged wasm and run the Node smoke test
+        run: |
+          cp zig-out/bin/zig_stark_capi.wasm bindings/js/zig_stark_capi.wasm
+          node bindings/js/test/smoke.mjs
 
   fuzz:
     name: gadget fuzz
