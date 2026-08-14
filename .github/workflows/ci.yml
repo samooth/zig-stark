@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    name: build, fmt, test (Zig 0.16.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ziglang/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Check formatting
+        run: zig build fmt
+
+      - name: Build all examples and benchmarks
+        run: zig build
+
+      - name: Run unit and e2e tests
+        run: zig build test
