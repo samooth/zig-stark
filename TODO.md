@@ -5,7 +5,7 @@ committed-MLE PCS (`BiniusStarkWith`): the O(2^k) `CommittedMlePcs`, the
 sub-linear `PackedPcs`, and the sub-linear polylog FRI-Binius PCS
 (`fripcs.zig`, FRI-fold in lockstep with the eval sum-check). Extension-field
 `(F, E)` soundness mode, boundary pins, and five gadgets (4-bit adder,
-bit-pack, range check, comparison, constraint DSL). 215 tests (200 unit + 15
+bit-pack, range check, comparison, constraint DSL). 217 tests (202 unit + 15
 end-to-end).
 
 ## 1. Sub-linear MLE evaluation / commitment (HIGH, DONE — polylog route landed)
@@ -106,14 +106,23 @@ column keeps its own eval sum-check and fold challenges, so individual claims
 stay individually bound. `BiniusStarkFri` uses it via `BatchFriPcsStark`;
 `BiniusArgFri` still uses the per-column `FriPcs`. See `docs/binius.md` §9.
 
-## 5. Performance (LOW)
+## 5. Performance (DONE — packing NTT + AdditiveFri leaf packing)
 
 - **CLMUL — DONE** (`src/binius/clmul.zig`, committed `2068ac3`): hardware
   `pclmulqdq` carry-less multiply for the tower `mul`/`mulHi`/`inv` fast path
   with runtime detection and lazy table build; software fallback otherwise.
-- Packing interpolation is O(N^2): additive FFT (Gao–Mateer) for O(N log N).
-- `AdditiveFri` commits each layer with a fresh Merkle tree; consider packing
-  multiple field elements per leaf and reusing the hasher.
+- **Packing interpolation — DONE.** `PackedPcs` now packs each row with the
+  inverse additive NTT in the novel basis (`Ntt.inverseForwardTransform`,
+  `fripcs.zig`) instead of the O(N²) Lagrange interpolation, and extends the
+  codewords with the forward additive NTT of the zero-padded novel message
+  (`Ntt.forwardTransform`, O(M log M)) instead of O(N·M) Horner evaluation.
+  Single-point row-combination evaluations use `pack.novelEval` (O(N)). The
+  polynomials are the same, so proofs are byte-identical. `PackedMle.interpolate`
+  remains as the documented coefficient-extraction reference.
+- **`AdditiveFri` — DONE.** `commitLayer` packs each FRI fold-pair into a single
+  Merkle leaf (`hashPair` hashes the concatenated bytes once), halving the
+  per-layer leaf count, the number of Blake3 calls, and the Merkle paths a query
+  carries (`LayerProof` now has one `path`).
 
 ## 6. Proof serialization (LOW, DONE)
 

@@ -8,6 +8,14 @@ breaking changes.
 
 ### Added
 
+- `src/binius/fripcs.zig`: `Ntt.forwardTransform` is now public, and a new
+  `Ntt.inverseForwardTransform` inverts it (reverse layers, inverse butterfly),
+  giving the O(2^k·k) interpolation / O(2^D·D) extension primitives of the
+  additive FFT in the novel basis. Tests pin `forward ∘ inverse == id` and
+  `pack.novelEval == forward` over zero-padded messages.
+- `src/binius/pack.zig`: `novelNorms` (comptime novel-basis normalizations
+  c_i = s_i(e_i)) and `novelEval` (O(2^k) single-point evaluation in the novel
+  basis, the analogue of Horner for the additive NTT).
 - `src/core/serialization.zig`: canonical little-endian proof wire encoding.
   `serialize(allocator, value)` / `deserialize(allocator, bytes, T)` derive the
   format from the compile-time type (no per-struct code): field elements as
@@ -26,6 +34,21 @@ breaking changes.
   false`; `deinit` frees `entries` when set, so serialized proofs remain
   leak-free.
 - e2e round-trip tests in `tests/e2e_tests.zig` for all proof shapes above.
+
+### Changed
+
+- **`src/binius/packed_pcs.zig` now packs rows with the additive NTT instead of
+  O(N²) Lagrange interpolation.** `buildRows` uses `inverseForwardTransform`
+  (O(2^{k2}·k2)) to put each row into novel-basis coefficients; `buildCodewords`
+  uses `forwardTransform` on the zero-padded novel message (O(M log M), M =
+  2^{k2+log_blowup}) instead of O(N·M) Horner extension; single-point
+  row-combination evaluations use `pack.novelEval`. The interpolating
+  polynomials are unchanged (the novel basis represents the same degree-<2^{k2}
+  polynomial), so proofs are byte-identical.
+- **`src/binius/addfri.zig` packs each FRI fold-pair into one Merkle leaf**
+  (`hashPair` hashes the concatenated element bytes once), halving the per-layer
+  leaf count and the Blake3 call count; `LayerProof` carries a single `path`
+  instead of `path0`/`path1` (proofs and Merkle paths per query halve).
 
 - `src/binius/batchpcs.zig`: batched eval PCS (M2). `BatchFriPcs(F, E,
   log_blowup, q)` shares one Merkle tree per FRI layer across all columns

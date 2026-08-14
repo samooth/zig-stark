@@ -298,3 +298,42 @@ coefficient `f(r)/d`.
   verify` (the verifier accepts the reconstructed proof), not field equality —
   the M31 proof embeds an allocator and the Binius proof borrows tables, so
   `std.meta.eql` would be wrong even though every field byte round-trips.
+
+## Packing via the additive NTT (novel basis) — O(N²) interpolation gone
+
+- The §5 "packing interpolation is O(N²)" item is satisfied not by a monomial
+  Gao–Mateer FFT but by switching `PackedPcs` to the *novel basis* the additive
+  NTT already uses. The row's monomial interpolant g and the novel-basis
+  polynomial h (from `inverseForwardTransform(table)`) are the SAME polynomial:
+  both have degree < 2^k2 and agree on the 2^k2 points of H. So the codeword,
+  the row-combination t, and the proof bytes are all unchanged — only the
+  internal coefficient representation moves. Validation was a "do no harm"
+  test: the existing PackedPcs + Stark round-trip tests must pass with
+  byte-identical behavior.
+- **Forward vs inverse NTT.** The forward butterfly `a' = a + b·t; b' = b + a'`
+  is a 2×2 matrix of determinant 1, so its inverse is the closed form
+  `b = a' + b'; a = a' + b·t`, applied over the layers in reverse order. I
+  validated `forward ∘ inverse == id` before trusting it (the layers reverse,
+  and the twiddle is the same `twiddles[i][coset_offset|k]`).
+- **Codeword extension in `fromInt` order.** `encode` (per-coset forward
+  transforms) does NOT evaluate at `fromInt(0..2^D-1)` in order, so it can't be
+  used directly for PackedPcs (whose verifier math needs `t(fromInt(j))`).
+  The right primitive is a single rate-1 forward transform of the *zero-padded*
+  novel message at dimension D: `forward(pad(row, 2^D), D, 0)` == eval at
+  `fromInt(j)` in order (pinned by the fripcs test). Padding is sound because
+  subsets with bits ≥ k2 would give degree ≥ 2^k2 polynomials that vanish from
+  the degree-<2^k2 message.
+- **Single-point novel evaluation.** `pack.novelEval` evaluates a novel-basis
+  polynomial at one point in O(2^k): precompute `w[i] = Ŵ_i(x) =
+  s_i(x)/s_i(e_i)` via the subspace recurrence `s_i(x) = s_{i-1}(x)² +
+  c_{i-1}·s_{i-1}(x)`, then subset-products `p[r] = ∏_{i∈S(r)} w[i]` via the
+  lowest set bit. Norms `c_i = s_i(e_i)` depend only on the field and k (the
+  Ntt's `norm` values), so they're O(k²) to compute per call. This replaces
+  Horner for the row-combination evaluations, which must now be `try` (it
+  allocates scratch).
+- **AdditiveFri leaves are fold-pairs.** Each FRI query at layer i opens the
+  pair (pn, pn+half) — exactly the two elements that fold together. Packing
+  that pair into one Merkle leaf (`hashPair` hashes the concatenated bytes
+  once) halves the leaves, the Blake3 calls, and the per-query Merkle paths
+  (`LayerProof` goes from `path0`/`path1` to one `path`). The verifier hashes
+  the pair the same way, so a single `MerkleVerify` authenticates both values.
