@@ -84,7 +84,7 @@ pub fn Ntt(comptime F: type) type {
         /// The forward additive NTT: message (2^log_y coefficients of the novel
         /// basis polynomial) -> evaluations over the coset `coset` of the domain
         /// of dimension log_y + coset_bits. `out.len == msg.len` (== 2^log_y).
-        fn forwardTransform(self: Self, out: []F, log_y: u8, coset: u32) void {
+        pub fn forwardTransform(self: Self, out: []F, log_y: u8, coset: u32) void {
             const D = self.log_domain_size;
             for (0..log_y) |rev| {
                 const i = log_y - 1 - rev; // layer i = log_y-1 .. 0, twiddles[i]
@@ -98,6 +98,34 @@ pub fn Ntt(comptime F: type) type {
                         const idx1 = idx0 | block;
                         out[idx0] = out[idx0].add(out[idx1].mul(t));
                         out[idx1] = out[idx1].add(out[idx0]);
+                    }
+                }
+            }
+            _ = D;
+        }
+
+        /// The inverse additive NTT: evaluations over the coset `coset` (as
+        /// produced by `forwardTransform`) -> novel-basis coefficients, in
+        /// place. The forward butterfly `a' = a + b·t; b' = b + a'` has
+        /// determinant 1, so its inverse is `b = a' + b'; a = a' + b·t`,
+        /// applied over the layers in reverse order.
+        pub fn inverseForwardTransform(self: Self, out: []F, log_y: u8, coset: u32) void {
+            const D = self.log_domain_size;
+            for (0..log_y) |rev| {
+                const i = rev; // layers in increasing order (reverse of forward)
+                const coset_offset: usize = @as(usize, coset) << @intCast(log_y - 1 - i);
+                const num_blocks = @as(usize, 1) << @intCast(log_y - 1 - i);
+                for (0..num_blocks) |k| {
+                    const t = self.twiddles[i][coset_offset | k];
+                    const block: usize = @as(usize, 1) << @intCast(i);
+                    for (0..block) |l| {
+                        const idx0 = (k << @intCast(i + 1)) | l;
+                        const idx1 = idx0 | block;
+                        const ap = out[idx0];
+                        const bp = out[idx1];
+                        const b = ap.add(bp);
+                        out[idx0] = ap.add(b.mul(t));
+                        out[idx1] = b;
                     }
                 }
             }
@@ -666,6 +694,57 @@ test "NTT fold identity (rate 4): fold(code, r) == Σ v·eq_r" {
     try testFoldIdentity(Gf16, 2, 2, 200);
     try testFoldIdentity(Gf256, 3, 2, 202);
     try testFoldIdentity(Gf256, 4, 2, 203);
+}
+
+test "inverse additive NTT inverts the forward transform" {
+    // forward ∘ inverse == identity on novel-basis messages (cosets 0..2^b-1).
+    const a = std.testing.allocator;
+    inline for (.{ Gf16, Gf256 }) |F| {
+        const Dmax = @as(u8, @intCast(@min(F.BITS, 5)));
+        var D: u8 = 1;
+        while (D <= Dmax) : (D += 1) {
+            var ntt = try Ntt(F).init(a, D);
+            defer ntt.deinit();
+            const log_y = D - 1;
+            const num_cosets: u32 = @as(u32, 1) << @intCast(1);
+            for (0..num_cosets) |coset| {
+                const msg = try randomTable(a, F, log_y, @as(u64, D) * 100 + coset);
+                defer a.free(msg);
+                const fwd = try a.dupe(F, msg);
+                defer a.free(fwd);
+                ntt.forwardTransform(fwd, log_y, @intCast(coset));
+                ntt.inverseForwardTransform(fwd, log_y, @intCast(coset));
+                for (msg, fwd) |orig, back| try std.testing.expect(orig.eq(back));
+            }
+        }
+    }
+}
+
+test "novel basis eval matches the forward additive NTT" {
+    // pack.novelEval is the O(N) single-point evaluation in the novel basis; it
+    // must agree with the NTT's forward transform (O(N log N)) at every domain
+    // point for a zero-padded message (the "codeword extension" in fromInt order).
+    const a = std.testing.allocator;
+    inline for (.{ Gf16, Gf256 }) |F| {
+        const kmax = @as(u8, @intCast(@min(F.BITS, 5) - 1)); // D = k + 1 <= F.BITS
+        var k: u8 = 1;
+        while (k <= kmax) : (k += 1) {
+            const msg = try randomTable(a, F, k, @as(u64, k) * 7 + 3);
+            defer a.free(msg);
+            const D = k + 1;
+            var ntt = try Ntt(F).init(a, D);
+            defer ntt.deinit();
+            const padded = try a.alloc(F, @as(usize, 1) << @intCast(D));
+            defer a.free(padded);
+            @memset(padded, F.zero());
+            @memcpy(padded[0..msg.len], msg);
+            ntt.forwardTransform(padded, D, 0);
+            for (0..padded.len) |i| {
+                const want = try pack.novelEval(a, F, k, msg, F.fromInt(i));
+                try std.testing.expect(padded[i].eq(want));
+            }
+        }
+    }
 }
 
 test "fold_lo chain == Σ t·eq_r (table fold)" {

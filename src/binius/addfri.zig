@@ -58,8 +58,9 @@ pub fn AdditiveFri(comptime F: type) type {
         pub const LayerProof = struct {
             value0: F,
             value1: F,
-            path0: []Hash.Digest,
-            path1: []Hash.Digest,
+            /// One Merkle path: the FRI fold-pair {pn, pn+half} is packed into a
+            /// single tree leaf, so a query opens one path per layer.
+            path: []Hash.Digest,
         };
 
         pub const LayerProofs = struct {
@@ -88,8 +89,7 @@ pub fn AdditiveFri(comptime F: type) type {
                 allocator.free(self.remainder);
                 for (self.queries) |q| {
                     for (q.layers.proofs) |lp| {
-                        allocator.free(lp.path0);
-                        allocator.free(lp.path1);
+                        allocator.free(lp.path);
                     }
                     allocator.free(q.layers.proofs);
                 }
@@ -135,10 +135,14 @@ pub fn AdditiveFri(comptime F: type) type {
             }
         };
 
-        fn hashElement(v: F) Hash.Digest {
-            var b: [SIZE]u8 = undefined;
-            v.toBytes(&b);
-            return Hash.hashBytes(&b);
+        /// Hash a FRI fold-pair into one leaf digest: the two field elements'
+        /// bytes are concatenated and hashed once (halving the per-layer leaf
+        /// count and the number of Blake3 calls vs one digest per element).
+        fn hashPair(a: F, b: F) Hash.Digest {
+            var buf: [2 * SIZE]u8 = undefined;
+            a.toBytes(buf[0..SIZE]);
+            b.toBytes(buf[SIZE..]);
+            return Hash.hashBytes(&buf);
         }
 
         fn evalCoeffs(coeffs: []const F, x: F) F {
@@ -194,9 +198,10 @@ pub fn AdditiveFri(comptime F: type) type {
         }
 
         fn commitLayer(allocator: std.mem.Allocator, codeword: []const F) !Layer {
-            const leaves = try allocator.alloc(Hash.Digest, codeword.len);
+            const half = codeword.len / 2;
+            const leaves = try allocator.alloc(Hash.Digest, half);
             defer allocator.free(leaves);
-            for (codeword, 0..) |v, j| leaves[j] = hashElement(v);
+            for (0..half) |j| leaves[j] = hashPair(codeword[j], codeword[j + half]);
             var tree = try allocator.create(MerkleTree);
             tree.* = try MerkleTree.init(allocator, leaves);
             return Layer{ .codeword = codeword, .hash = tree.root(), .tree = tree };
@@ -280,8 +285,7 @@ pub fn AdditiveFri(comptime F: type) type {
             errdefer {
                 for (queries[0..qbuilt]) |q| {
                     for (q.layers.proofs) |lp| {
-                        allocator.free(lp.path0);
-                        allocator.free(lp.path1);
+                        allocator.free(lp.path);
                     }
                     allocator.free(q.layers.proofs);
                 }
@@ -316,8 +320,7 @@ pub fn AdditiveFri(comptime F: type) type {
                 proofs[i] = LayerProof{
                     .value0 = layers[i].codeword[pn],
                     .value1 = layers[i].codeword[pn + half],
-                    .path0 = try layers[i].tree.open(pn, allocator),
-                    .path1 = try layers[i].tree.open(pn + half, allocator),
+                    .path = try layers[i].tree.open(pn, allocator),
                 };
                 p = pn;
             }
@@ -363,9 +366,9 @@ pub fn AdditiveFri(comptime F: type) type {
                     const pn = p % half;
                     const lp = q.layers.proofs[i];
 
-                    // Authenticate the two opened values against the layer root.
-                    if (!MerkleVerify(proof.layers[i].hash, pn, hashElement(lp.value0), lp.path0)) return false;
-                    if (!MerkleVerify(proof.layers[i].hash, pn + half, hashElement(lp.value1), lp.path1)) return false;
+                    // Authenticate the opened fold-pair against the layer root
+                    // (one leaf packs both values, so a single path suffices).
+                    if (!MerkleVerify(proof.layers[i].hash, pn, hashPair(lp.value0, lp.value1), lp.path)) return false;
 
                     if (i > 0) {
                         // The fold from the previous layer must match the value opened

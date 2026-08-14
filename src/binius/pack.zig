@@ -202,6 +202,65 @@ pub fn PackedMle(comptime F: type) type {
     };
 }
 
+/// Novel-basis normalizations c_i = s_i(e_i) for i < k, where s_i is the
+/// vanishing polynomial of V_i = span{e_0..e_{i-1}} and e_i = fromInt(2^i).
+/// The i-th novel basis element is Ŵ_i(x) = s_i(x)/c_i, matching the additive
+/// NTT in `fripcs.zig`. Computed at comptime from the field only.
+pub fn novelNorms(comptime S: type, comptime k: u8) [k]S {
+    var norms: [k]S = undefined;
+    // prev[i] = s_j(e_i) for the current depth j; s_0(x) = x.
+    var prev: [k]S = undefined;
+    for (0..k) |i| prev[i] = S.fromInt(@as(u128, 1) << @intCast(i)); // s_0(e_i) = e_i
+    for (0..k) |j| {
+        norms[j] = prev[j]; // c_j = s_j(e_j)
+        for (j + 1..k) |i| prev[i] = prev[i].mul(prev[i]).add(norms[j].mul(prev[i]));
+    }
+    return norms;
+}
+
+/// Evaluate a degree-<2^k polynomial given in the *novel* basis (see
+/// `fripcs.zig` `Ntt`) at a single point `x`, in O(2^k) field ops. The i-th
+/// basis element is Ŵ_i(x) = s_i(x)/s_i(e_i); `coeffs[r]` is the coefficient of
+/// ∏_{i∈S(r)} Ŵ_i with S(r) the set bits of r. This is the packing analogue of
+/// Horner evaluation: what the FRI-Binius additive NTT computes over the whole
+/// domain, restricted to one point. `k <= S.BITS`; the caller frees the scratch.
+pub fn novelEval(allocator: std.mem.Allocator, comptime S: type, k: u8, coeffs: []const S, x: S) !S {
+    std.debug.assert(k >= 1 and k <= S.BITS);
+    std.debug.assert(coeffs.len == @as(usize, 1) << @intCast(k));
+    const N = @as(usize, 1) << @intCast(k);
+    // Norms c_j = s_j(e_j), computed here at runtime (k is a runtime parameter;
+    // `novelNorms` is the comptime variant for comptime k).
+    var norms: [S.BITS]S = undefined;
+    var prev: [S.BITS]S = undefined;
+    for (0..k) |i| prev[i] = S.fromInt(@as(u128, 1) << @intCast(i)); // s_0(e_i) = e_i
+    for (0..k) |j| {
+        norms[j] = prev[j]; // c_j = s_j(e_j)
+        for (j + 1..k) |i| prev[i] = prev[i].mul(prev[i]).add(norms[j].mul(prev[i]));
+    }
+    const w = try allocator.alloc(S, k);
+    defer allocator.free(w);
+    const p = try allocator.alloc(S, N);
+    defer allocator.free(p);
+    // w[i] = Ŵ_i(x) = s_i(x)/c_i, with s_i(x) via the subspace recurrence
+    // s_i(x) = s_{i-1}(x)² + c_{i-1}·s_{i-1}(x).
+    var sx = x; // s_0(x) = x
+    w[0] = x; // Ŵ_0(x) = x/c_0, c_0 = 1
+    for (1..k) |i| {
+        sx = sx.mul(sx).add(norms[i - 1].mul(sx));
+        w[i] = sx.mul(norms[i].inv());
+    }
+    // p[r] = ∏_{i∈S(r)} w[i], via the lowest set bit (O(N)).
+    p[0] = S.one();
+    for (1..N) |r| {
+        const lsb = r & -%r;
+        const j = @ctz(lsb);
+        p[r] = p[r ^ lsb].mul(w[j]);
+    }
+    var acc = S.zero();
+    for (0..N) |r| acc = acc.add(coeffs[r].mul(p[r]));
+    return acc;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

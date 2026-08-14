@@ -1,5 +1,6 @@
 const std = @import("std");
-const PackedMle = @import("pack.zig").PackedMle;
+const Pack = @import("pack.zig");
+const Ntt = @import("fripcs.zig").Ntt;
 const Polynomial = @import("polynomial.zig");
 const CoreHash = @import("../core/hash/hash.zig");
 const CoreMerkle = @import("../core/merkle/merkle.zig");
@@ -9,10 +10,13 @@ const CoreMerkle = @import("../core/merkle/merkle.zig");
 /// The 2^k evaluation table is viewed as a 2^{k1} × 2^{k2} matrix
 /// (k = k1 + k2, k2 ≤ BITS). Each row is *packed* into a univariate
 /// polynomial row_i of degree < 2^{k2} with row_i(x_j) = M[i][j] for
-/// x_j = fromInt(j) (`PackedMle.interpolate`). The rows are Reed-Solomon
-/// extended over the additive domain {x_j : j < 2^{k2+log_blowup}} and the
-/// matrix is committed as a Merkle tree over *columns*: leaf c hashes column
-/// c (the extended entries of every row at position c).
+/// x_j = fromInt(j), represented in the *novel* basis (the coefficients the
+/// additive NTT in `fripcs.zig` consumes): `inverseForwardTransform` turns the
+/// row into its O(2^{k2}·k2) novel coefficients. The rows are Reed-Solomon
+/// extended over the additive domain {x_j : j < 2^{k2+log_blowup}} with the
+/// forward additive NTT of the zero-padded novel message, and the matrix is
+/// committed as a Merkle tree over *columns*: leaf c hashes column c (the
+/// extended entries of every row at position c).
 ///
 /// Evaluation at r = (r_row, r_col): the row-combined polynomial
 ///
@@ -38,7 +42,6 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
         const Hash = CoreHash.Hash;
         const MerkleTree = CoreMerkle.MerkleTree;
         const MerkleVerify = CoreMerkle.verify;
-        const Pack = PackedMle(F);
 
         pub const Params = struct {
             /// log2 of the number of rows.
@@ -97,24 +100,10 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
             return acc;
         }
 
-        fn evalF(coeffs: []const F, x: F) F {
-            var acc = F.zero();
-            var i: usize = coeffs.len;
-            while (i > 0) {
-                i -= 1;
-                acc = acc.mul(x).add(coeffs[i]);
-            }
-            return acc;
-        }
-
-        fn evalE(coeffs: []const E, x: E) E {
-            var acc = E.zero();
-            var i: usize = coeffs.len;
-            while (i > 0) {
-                i -= 1;
-                acc = acc.mul(x).add(coeffs[i]);
-            }
-            return acc;
+        /// Evaluate the row-combination t (novel-basis coefficients, degree
+        /// < 2^{k2}) at an additive-domain point x ∈ E.
+        fn evalT(allocator: std.mem.Allocator, params: Params, t: []const E, x: E) !E {
+            return Pack.novelEval(allocator, E, params.k2, t, x);
         }
 
         fn hashElement(v: F) Hash.Digest {
@@ -158,26 +147,35 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
             }
         };
 
-        /// Pack every row into a univariate polynomial (degree < 2^{k2}).
+        /// Pack every row into the novel-basis coefficients of its univariate
+        /// polynomial (degree < 2^{k2}), via the inverse additive NTT: the
+        /// O(2^{k2}·k2) analogue of Lagrange interpolation.
         fn buildRows(allocator: std.mem.Allocator, params: Params, table: []const F) ![][]F {
             const n1: usize = @as(usize, 1) << @intCast(params.k1);
             const n2: usize = @as(usize, 1) << @intCast(params.k2);
             std.debug.assert(table.len == n1 * n2);
+            var ntt = try Ntt(F).init(allocator, params.k2);
+            defer ntt.deinit();
             const rows = try allocator.alloc([]F, n1);
             errdefer {
                 for (rows) |rw| allocator.free(rw);
                 allocator.free(rows);
             }
             for (0..n1) |i| {
-                rows[i] = try Pack.interpolate(allocator, params.k2, table[i * n2 ..][0..n2]);
+                rows[i] = try allocator.dupe(F, table[i * n2 ..][0..n2]);
+                ntt.inverseForwardTransform(rows[i], params.k2, 0);
             }
             return rows;
         }
 
-        /// RS-extension of every row over the additive domain {fromInt(j)}.
+        /// RS-extension of every row over the additive domain {fromInt(j)}: the
+        /// forward additive NTT of the zero-padded novel message, O(M log M)
+        /// with M = 2^{k2+log_blowup} (Horner per point was O(M·2^{k2})).
         fn buildCodewords(allocator: std.mem.Allocator, params: Params, rows: []const []F) ![][]F {
             const n1: usize = @as(usize, 1) << @intCast(params.k1);
             const d2n: usize = @as(usize, 1) << @intCast(params.d2());
+            var ntt = try Ntt(F).init(allocator, params.d2());
+            defer ntt.deinit();
             const cw = try allocator.alloc([]F, n1);
             errdefer {
                 for (cw) |c| allocator.free(c);
@@ -185,7 +183,9 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
             }
             for (0..n1) |i| {
                 const c = try allocator.alloc(F, d2n);
-                for (0..d2n) |j| c[j] = evalF(rows[i], F.fromInt(j));
+                @memset(c, F.zero());
+                @memcpy(c[0..rows[i].len], rows[i]);
+                ntt.forwardTransform(c, params.d2(), 0);
                 cw[i] = c;
             }
             return cw;
@@ -288,7 +288,7 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
             var value = E.zero();
             for (0..n2) |j| {
                 const beta = kernel(params.k2, r_col, j);
-                value = value.add(beta.mul(evalE(t, lift(F.fromInt(j)))));
+                value = value.add(beta.mul(try evalT(allocator, params, t, lift(F.fromInt(j)))));
             }
 
             var tree = try commitCodewords(allocator, params, cw);
@@ -361,14 +361,14 @@ pub fn PackedPcs(comptime F: type, comptime E: type) type {
                 for (0..n1) |i| {
                     combo = combo.add(kernel(params.k1, r_row, i).mul(lift(col.values[i])));
                 }
-                if (!combo.eq(evalE(proof.t, lift(F.fromInt(col.index))))) return false;
+                if (!combo.eq(try evalT(allocator, params, proof.t, lift(F.fromInt(col.index))))) return false;
             }
 
             // f(r) = Σ_j β_{r_col}(j)·t(x_j).
             var value = E.zero();
             for (0..n2) |j| {
                 const beta = kernel(params.k2, r_col, j);
-                value = value.add(beta.mul(evalE(proof.t, lift(F.fromInt(j)))));
+                value = value.add(beta.mul(try evalT(allocator, params, proof.t, lift(F.fromInt(j)))));
             }
             return proof.value.eq(value);
         }
