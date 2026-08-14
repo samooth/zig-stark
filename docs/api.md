@@ -246,3 +246,23 @@ Inputs are the same serialized wire-format buffers as `bindings/js/`
 statement-building code drives either backend. `proveColumns` returns
 `{ proof: Buffer, roots: Buffer }`; `verify` returns a boolean. A smoke test
 lives in `bindings/node/test/smoke.mjs`.
+
+## CUDA (experimental, native server)
+
+`src/cuda/` is the start of native GPU acceleration (server-side; browsers
+stay on CPU + Web Workers). Zig 0.16 cannot emit CUDA kernels itself — the
+nvptx LLVM backend errors and the self-hosted backend is unavailable — so
+kernels are CUDA C compiled to PTX by `nvcc` and loaded at runtime via the
+**CUDA Driver API** (`cuModuleLoadData` / `cuLaunchKernel`), with manual
+`extern "c"` bindings in `src/cuda/cuda.zig` (`@cImport("cuda.h")` mislinks
+the Driver API on 0.16). The PTX is embedded via `@embedFile` (no runtime
+file), and `Cuda.init` fails cleanly when there is no GPU/driver so callers
+fall back to CPU.
+
+- `zig build cuda-hello` — build + run the `vecAdd` validation kernel
+  (requires a GPU + driver; on the RTX 3080 it processes 1M u32 in ~3 ms
+  including transfers).
+- `zig build cuda-kernels` — regenerate `src/cuda/kernels/*.ptx` with `nvcc`
+  (the committed PTX keeps the default build free of the CUDA toolkit).
+- Roadmap (E1): GPU the Binius zero-check sum-check round evaluation (Gf256
+  first, then Gf2_128 via bit-sliced field mul), then the M31 circle FFT.

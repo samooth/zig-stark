@@ -45,6 +45,14 @@ breaking changes.
   `zs_binius_commit`) with a per-call arena-backed host allocator; the addon's
   `Host` avoids a dangling-allocator bug by rebuilding the arena allocator per
   callback. Smoke test in `bindings/node/test/smoke.mjs`.
+- **CUDA (E0a, experimental)** (`src/cuda/`): minimal CUDA Driver API bindings
+  (`extern "c"`, since `@cImport("cuda.h")` mislinks on Zig 0.16) + a
+  `Cuda` context helper. A `vecAdd` validation kernel is compiled to PTX by
+  `nvcc` and embedded/loaded via `cuModuleLoadData` / `cuLaunchKernel`;
+  `zig build cuda-hello` runs it (GPU result compared to CPU) and
+  `zig build cuda-kernels` regenerates the PTX. Documented that Zig 0.16's
+  nvptx backend cannot emit loadable kernels, so CUDA C + Driver API is the
+  path. `Cuda.init` fails cleanly without a GPU/driver (CPU fallback).
 
 - **CI** (`.github/workflows/ci.yml`): `zig build fmt`, `zig build`, and
   `zig build test` on every push/PR, on Zig 0.16.0 stable via

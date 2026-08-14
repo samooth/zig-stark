@@ -27,8 +27,13 @@ details live in `docs/binius.md`, `docs/protocol.md`, and `docs/wire.md`.
 - **Recursive verification.** Turn the FRI-Binius verifier into an AIR/gadget so
   proofs verify proofs (proof recursion / composition), the natural next step for
   folding schemes.
-- **Parallel prover.** Thread the dominant work — per-column commitments,
-  sum-checks, row packing (additive NTT), FRI folds — across cores.
+- **GPU (Phase E, in progress).** Native CUDA acceleration for the server-side
+  prover. E0a (toolchain) landed: Zig 0.16 cannot emit nvptx kernels (the LLVM
+  backend errors and there is no self-hosted backend), so kernels are CUDA C
+  compiled to PTX and loaded via the CUDA Driver API from `src/cuda/` (opt-in,
+  CPU fallback when no GPU/driver). Next: E1 — GPU the Binius zero-check
+  sum-check round evaluation (Gf256 first, then Gf2_128 via bit-sliced field
+  mul); E2 — the M31 circle FFT / classic NTT; E3 — Merkle (Blake3) hashing.
 - **Smaller batch openings.** The remaining proof-size gap is the batch-proof
   internals: batched FRI queries (combine `q` queries into one response
   polynomial per layer), a Brakedown-style batched eval sum-check, and

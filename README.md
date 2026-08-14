@@ -53,6 +53,7 @@ src/
     constraints.zig Comptime constraint DSL for composing gadgets
     addfri.zig  Additive FRI low-degree test over the tower field
     arg.zig     Argument composition (sum-check + committed PCS)
+  cuda/         Experimental CUDA Driver API bindings + PTX kernels (src/cuda)
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation
@@ -82,6 +83,7 @@ zig build bench-binius # run Binius STARK benchmarks (-Doptimize=ReleaseFast rec
 zig build wasm       # build the C ABI as a wasm32 module (bindings/js)
 zig build fuzz       # randomized gadget fuzz (prove/verify/tamper)
 zig build node-addon -Dnapi-include=<node/include/dir> # Node.js N-API addon (bindings/node)
+zig build cuda-hello # CUDA validation kernel (requires GPU + driver); kernels: zig build cuda-kernels
 ```
 
 Run the examples:

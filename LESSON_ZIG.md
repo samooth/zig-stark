@@ -304,3 +304,30 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
 
 
 
+
+## CUDA (Phase E, E0a) — toolchain findings
+
+- **Zig 0.16 cannot emit CUDA kernels.** `zig build-obj -target nvptx64-cuda`
+  fails at the LLVM backend ("cannot emit nvptx64 binary ... only '-femit-asm'
+  is supported"), and `-femit-asm` then hits `LLVM ERROR: .alias requires PTX
+  version >= 6.3` even for a trivial kernel; `-fno-llvm` says "compiler backend
+  unavailable". The SIMT builtins (`@workGroupId`/`@workItemId`/`@workGroupSize`)
+  exist, but there is no `@cudaLaunch`. Conclusion: kernels must be CUDA C
+  compiled to PTX with `nvcc`, loaded at runtime via the CUDA Driver API.
+- **`@cImport("cuda.h")` mislinks the Driver API on 0.16** — calling
+  `cuInit` through the translated header segfaults, while the same call via a
+  manual `extern "c" fn` works. Use minimal manual externs (types: `CUresult`
+  = `c_uint`, `CUdevice` = `c_int`, `CUdeviceptr` = `u64`, contexts/modules/
+  functions = `?*anyopaque`) and link `-lcuda` (+ `-lc` for the `extern "c"`).
+- **Kernel launch params.** `cuLaunchKernel(..., kernelParams, ...)` takes the
+  classic `void**`: an array where each entry points to the argument *value*
+  (e.g. `&dptr` for a `CUdeviceptr`, `&n` for a `u32`). Pass the array with
+  `&array` (a `*[N]?*const anyopaque` coerces to the `[*c]` param) — do not
+  `@ptrCast` a `const` array (it discards const).
+- **Sticky driver errors.** "an illegal memory access" surfaces at the next
+  synchronous call (`cuCtxSynchronize`) and persists for the context; a fresh
+  process resets it. Debug with per-call return codes, and read back a few
+  elements before assuming the kernel wrote.
+- **`zig build fmt` skips `.cu` files** (path-based fmt only touches `.zig`),
+  so committing CUDA sources doesn't break the fmt gate. `std.time.nanoTimestamp`
+  does not exist in 0.16 — use the repo's `clock_gettime` helper.
