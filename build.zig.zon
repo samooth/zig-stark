@@ -7,6 +7,8 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "Dockerfile",
+        "LICENSE",
         "src",
         "examples",
         "tests",

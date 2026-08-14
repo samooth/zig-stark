@@ -8,6 +8,19 @@ breaking changes.
 
 ### Added
 
+- **CI** (`.github/workflows/ci.yml`): `zig build fmt`, `zig build`, and
+  `zig build test` on every push/PR, on Zig 0.16.0 stable via
+  `ziglang/setup-zig`; CI badge in the README.
+- **`Dockerfile`**: reproducible build image pinning Zig 0.16.0 from
+  ziglang.org (SHA-256 verified) that runs `zig build test`.
+- **`LICENSE`**: Apache-2.0 (© 2026 Tomás Díaz); the README license section now
+  points at it.
+- **`docs/api.md`**: consumer-facing API reference (both stacks, PCS backends,
+  fields, gadgets) and a minimal external-dependency example
+  (`build.zig.zon` → `@import("zig-stark")`).
+- **README Benchmarks section**: published circle-FFT and Binius-STARK numbers
+  (ReleaseFast, Ryzen 7 5800H) with methodology.
+
 - `src/binius/fripcs.zig`: `Ntt.forwardTransform` is now public, and a new
   `Ntt.inverseForwardTransform` inverts it (reverse layers, inverse butterfly),
   giving the O(2^k·k) interpolation / O(2^D·D) extension primitives of the
@@ -90,6 +103,12 @@ breaking changes.
 
 ### Changed
 
+- **Zig 0.16.0 stable.** The repo previously targeted a 0.16.0-dev build;
+  the compatibility pass (commit `2e3e0fc`) replaces the dev-era
+  `std.heap.GeneralPurposeAllocator` with `std.heap.DebugAllocator` in examples
+  and benchmarks and marks never-mutated locals as `const` (batchpcs, fripcs,
+  simd test). All 217 tests pass on stable; README, `LESSON_ZIG.md` and
+  `build.zig.zon` (already `minimum_zig_version = "0.16.0"`) document it.
 - **`src/binius/packed_pcs.zig` now packs rows with the additive NTT instead of
   O(N²) Lagrange interpolation.** `buildRows` uses `inverseForwardTransform`
   (O(2^{k2}·k2)) to put each row into novel-basis coefficients; `buildCodewords`

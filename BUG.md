@@ -2,6 +2,8 @@
 
 Confirmed defects found during development, with reproduction notes. Keep the entry
 after fixing (strike-through or a note) so the fix commit has a record of what/why.
+There are no open defects; reported issues are tracked on GitHub
+(https://github.com/samooth/zig-stark/issues).
 
 ## Fiat-Shamir challenge sampling is 4-bit for 1-byte fields — FIXED
 
