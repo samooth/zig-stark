@@ -8,6 +8,17 @@ breaking changes.
 
 ### Added
 
+- `src/binius/batchpcs.zig`: batched eval PCS (M2). `BatchFriPcs(F, E,
+  log_blowup, q)` shares one Merkle tree per FRI layer across all columns
+  opened at the same point, so a single query path per round serves every
+  column; each column keeps its own eval sum-check and fold challenges, so
+  individual claims stay individually bound. `BatchFriPcsStark` mirrors the
+  `FriPcsStark` adapter (`commit` per column, plus `proveEvalBatch` /
+  `verifyEvalBatch`). `BiniusStarkFri` now uses it: `stark.zig` dispatches on
+  `@hasDecl(CP, "proveEvalBatch")` and `Proof.evals` is a tagged union of
+  `[]EvalProof` (per-column) or `CP.BatchProof` (batched), cutting the
+  dominant per-query Merkle-path section by a factor of `num_columns`.
+  `BiniusArgFri` keeps the per-column `FriPcs`.
 - `src/binius/bitpack.zig`: a bit-pack gadget for the zero-check STARK. Each
   hypercube point holds one `num_bits`-wide value `v` plus `num_bits` boolean
   bit columns; the constraints are `num_bits` booleanity equations plus one

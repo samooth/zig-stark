@@ -206,13 +206,25 @@ coefficient `f(r)/d`.
   column of `2`s gives `Σ_x R(x)β_τ(x) = α ≠ 0` for any α ≠ 0 (soundness
   `1 - 1/|F|` in the combination coefficient).
 
-## Batch openings (design only, TODO M2)
+## Batch openings (M2, implemented)
 
-- The per-query opening cost is the last big proof-size factor. The design in
-  `docs/binius.md` §9: batch FRI queries with a λ combination (one folded query
-  chain per layer), replace per-query eval openings with a single
-  Brakedown-style sumcheck over the combiner `g = Σ λ_j f_j` committed at FRI
-  code size, and use tower-size-1 packing so batch-opening composes with
-  `FriPcs`. The batched section needs its own Schwartz-Zippel bound (the λ
-  combination coefficient can cancel a zero-check sum), so it must not reuse
-  the per-query error term.
+- The per-query opening cost was the last big proof-size factor. The design in
+  `docs/binius.md` §9 proposed a λ-combiner, but that binds only the
+  combination — the STARK's zero-check/product checks need each individual
+  column value, so a combiner would need an extra per-column soundness term
+  per batch. The implemented `src/binius/batchpcs.zig` instead shares *one
+  Merkle tree per FRI layer* across all columns: every column runs its own eval
+  sum-check and folds with its own per-column challenge, but each folded layer
+  is committed as a single tree whose leaves hash all columns' `(folded, next)`
+  pairs, so one query path per round serves every column (soundness unchanged —
+  each claim stays individually bound by the per-column fold identity).
+- `stark.zig` dispatches with `@hasDecl(CP, "proveEvalBatch")`; `Proof.evals`
+  is a tagged union `if (has_batch) CP.BatchProof else []EvalProof`, and the
+  prove/verify paths branch on it (gather `distinct` columns + roots, one
+  `proveEvalBatch`/`verifyEvalBatch` call, fill `value_of` from the batch's
+  `.values`). `BiniusStarkFri` now uses `BatchFriPcsStark`; `BiniusArgFri`
+  keeps the per-column `FriPcs` (it does not open all its tables at one point
+  via the STARK), and the k=4..6 size test covers both proof shapes through
+  `friEvalUnits` (`@hasField` dispatch on the eval section).
+- Remaining design options (still future work): λ-combined FRI queries, a
+  Brakedown-style batched sumcheck, and tower-size-1 packing.

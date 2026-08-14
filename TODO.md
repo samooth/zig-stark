@@ -48,8 +48,8 @@ Notes:
   value; our `claim_k == final_folded·∏(1+r_j+ch_j)` check closes that gap.
 - Reuses the core Merkle + Blake3 transcript; proofs own their memory
   (`Proof.deinit`).
-- **DONE — default wiring.** `BiniusStarkFri(F, E, max_cols, log_blowup,
-  num_queries)` in `stark.zig` exposes the zero-check STARK with `FriPcs` as
+- **DONE — default wiring.** `BiniusStarkFri(F, E, log_blowup, num_queries)`
+  in `stark.zig` exposes the zero-check STARK with `FriPcs` as
   its PCS; the 4-bit adder e2e uses it, and `BiniusStark` remains the O(2^k)
   `CommittedMlePcs` oracle. The proof-size test (`tests/e2e_tests.zig`,
   single-field Gf256 for Debug speed) runs both PCS at k = 4..6 and asserts
@@ -60,15 +60,15 @@ Notes:
 
 ## 2. Generalize `BiniusArg(F, max_tables)` to `(F, E)` — DONE
 
-`arg.zig` now mirrors the STARK: `BiniusArg(F, max_tables)` stays the
-single-field construction (alias), `BiniusArgWith(F, E, max_tables, CP)` runs
-the product sum-check over the extension field `E` (F tables lifted by the
-zero-cost tower embedding) with a pluggable PCS, and `BiniusArgFri` wires in
-the polylog `FriPcs`. Tests cover extension-mode round trips, FRI round trips
-(single-field Gf256 and extension Gf16/Gf2_128), tamper rejection (wrong sum,
-wrong root), and an e2e proof-size check (k = 4..6, single-field) mirroring the
-STARK one. Runtime note: extension-mode sum-checks are slow in Debug — keep
-the FRI proof-size test single-field.
+`arg.zig` now mirrors the STARK: `BiniusArg(F, E)` stays the single-field
+construction (alias), `BiniusArgWith(F, E, CP)` runs the product sum-check
+over the extension field `E` (F tables lifted by the zero-cost tower
+embedding) with a pluggable PCS, and `BiniusArgFri(F, E, log_blowup, q)` wires
+in the polylog `FriPcs`. Tests cover extension-mode round trips, FRI round
+trips (single-field Gf256 and extension Gf16/Gf2_128), tamper rejection (wrong
+sum, wrong root), and an e2e proof-size check (k = 4..6, single-field)
+mirroring the STARK one. Runtime note: extension-mode sum-checks are slow in
+Debug — keep the FRI proof-size test single-field.
 
 ## 3. Soundness documentation — DONE
 
@@ -88,17 +88,21 @@ reference implementations of the `BiniusStarkWith` interface. Next candidates:
 range check and bit-sliced comparison built on `BitPack`, and a small
 constraint DSL if a third gadget wants shared helper terms.
 
-## 4b. Batched / batched-VSB commitments (HIGH, TODO — M2, design documented)
+## 4b. Batched / batched-VSB commitments (HIGH, DONE — M2, committed)
 
-`docs/binius.md` §9 sketches the batch-opening design (single polynomial per
-queries batch, batched-Brakedown sumcheck, tower-size-1 packing) as a TODO
-milestone; see that section before starting implementation.
+M2 landed a batched-eval FRI PCS (`src/binius/batchpcs.zig`): the STARK now
+opens every distinct witness column at the sum-check point in one proof whose
+FRI layers are shared Merkle trees (one tree per layer hashing all columns'
+folded pairs), so a single query path per round serves every column. Each
+column keeps its own eval sum-check and fold challenges, so individual claims
+stay individually bound. `BiniusStarkFri` uses it via `BatchFriPcsStark`;
+`BiniusArgFri` still uses the per-column `FriPcs`. See `docs/binius.md` §9.
 
 ## 5. Performance (LOW)
 
-- Tower `mul` is recursive Karatsuba (~3^7 base ops for Gf2_128): extension
-  mode is ~100–1000× slower than GF(256) in ReleaseFast, minutes in Debug.
-  Switch to a CLMUL / comb-based carry-less multiply when the platform allows.
+- **CLMUL — DONE** (`src/binius/clmul.zig`, committed `2068ac3`): hardware
+  `pclmulqdq` carry-less multiply for the tower `mul`/`mulHi`/`inv` fast path
+  with runtime detection and lazy table build; software fallback otherwise.
 - Packing interpolation is O(N^2): additive FFT (Gao–Mateer) for O(N log N).
 - `AdditiveFri` commits each layer with a fresh Merkle tree; consider packing
   multiple field elements per leaf and reusing the hasher.

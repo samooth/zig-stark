@@ -289,7 +289,7 @@ the API. Concretely:
 - All library tests run against `std.testing.allocator` so every test is
   leak-checked; the suite will fail on any un-freed allocation.
 
-## 9. Batched openings (design, TODO — M2)
+## 9. Batched openings (IMPLEMENTED — M2)
 
 The biggest remaining proof-size gap is the number of *openings*. `verifyEval`
 runs `num_queries` independent openings, each of which either opens a single
@@ -298,37 +298,48 @@ polylog `FriPcs`). Both multiply the per-query transcript cost by the query
 count and, in the FRI case, re-send the whole query-consistency chain for
 every query. Batching attacks this directly:
 
-- **Batched FRI queries.** FRI itself is a batch argument: the verifier can
-  merge `q` queries by sampling a random `λ_j` per query and checking the
-  single folded combination `Σ λ_j·query_j`. Instead of `q` independent query
-  chains, the prover sends one response polynomial per queried *layer* whose
-  Merkle path is shared, and the verifier checks the combination once. This
-  removes a factor of `q` from the query section of the proof.
-- **Batched opening via a single sumcheck (Brakedown-style).** The current
-  eval openings verify one `(col, point)` at a time. The batch-opening
-  protocol asks for all `(col_j, x_j)` in one sumcheck: define the batched
-  polynomial `g(z) = Σ_j λ_j·f_j(z)` over the queried columns `f_j`, have the
-  prover commit the batched "combiner" table `g(x) = Σ_j λ_j·f_j(x)` at the
-  FRI-blown-up code size, and run a single interactive sumcheck that each
-  claimed `g(x_j)` matches `g`'s committed code. The proof is then dominated
-  by one code-consistent evaluation sumcheck instead of `q` Merkle paths
-  (`O(q·d·|E|)` total → `O(k·|E|)` per query batch).
+- **Shared per-layer FRI trees.** The STARK opens every *distinct* witness
+  column at the same sum-check point `τ'` (§4.2). `src/binius/batchpcs.zig`
+  (M2) exploits this: each column still runs its own eval sum-check and folds
+  with its own per-column challenge, but every folded layer is committed as
+  *one* Merkle tree whose leaf hashes all columns' `(folded_code, next)` pairs
+  at that index. One query path per round then serves every column, cutting
+  the dominant per-query path section by a factor of `num_columns`. The
+  `BatchFriPcsStark(F, E, log_blowup, q)` adapter exposes `commit` (per-column
+  roots, identical to `FriPcs`) plus `proveEvalBatch` / `verifyEvalBatch`;
+  `BiniusStarkFri` dispatches to it via `@hasDecl(CP, "proveEvalBatch")`
+  (`stark.zig`'s `has_batch`, with `Proof.evals` a tagged union of
+  `[]EvalProof` or `CP.BatchProof`). `BiniusArgFri` still uses the per-column
+  `FriPcs`.
+- **Why not a λ-combiner?** Merging the columns into one polynomial
+  `g = Σ_j λ_j·f_j` binds only the combination, not the individual `f_j(r)` —
+  a zero-check sum or product over the columns (§3, §8) needs each individual
+  value, so the Brakedown-style combiner below does not compose with the
+  STARK's per-column checks without an extra per-column soundness term per
+  batch. The shared-tree form keeps every claim individually bound via the
+  per-column fold identity `fold^k(code_j, ch) = f_j(ch)` at zero extra
+  soundness cost, which is why it won.
+- **Batched FRI queries (design, not implemented).** FRI itself is a batch
+  argument: the verifier can merge `q` queries by sampling a random `λ_j` per
+  query and checking the single folded combination `Σ λ_j·query_j`. Instead of
+  `q` independent query chains, the prover sends one response polynomial per
+  queried *layer* whose Merkle path is shared, and the verifier checks the
+  combination once. This would remove a further factor of `q` from the query
+  section; each of the `num_queries` in the current batch proof still carries
+  its own path.
+- **Batched opening via a single sumcheck (Brakedown-style, design).** The
+  alternative batch-opening protocol asks for all `(col_j, x_j)` in one
+  sumcheck over a committed "combiner" table `g(x) = Σ_j λ_j·f_j(x)` at the
+  FRI-blown-up code size, `O(q·d·|E|)` total → `O(k·|E|)` per query batch.
+  Blocked on the individual-binding issue above, so left as future work.
 - **Tower-size-1 packing.** `PackedPcs` already commits packed univariate
   columns; extending the packing to tower size 1 (`v(i) = f_eval(i)` directly,
-  no interleaving) lets the batched combiner be committed and opened with the
-  same machinery, so batch-opening composes with `FriPcs` without a second
-  commitment scheme.
+  no interleaving) lets a future batched combiner be committed and opened with
+  the same machinery, composing with `FriPcs` without a second commitment
+  scheme.
 
-Interaction with the FRI lockstep in §5: the lockstep sumcheck folds the code
-with the *same* challenges as the eval sumcheck, which is exactly the shape a
-batched opening wants — the combiner `g` is a linear combination of the
-committed columns, so its code fold is the same combination of the per-column
-folds. Implementation (M2) therefore: (1) batch the FRI queries with λ
-combination; (2) replace per-query eval openings with one Brakedown-style
-batched sumcheck over `g`; (3) verify the batched claim against the FRI-final
-value; (4) size-test at k = 4..6 as in `tests/e2e_tests.zig`. Soundness needs
-a fresh λ per batch and an `|F|`-side Schwartz-Zippel term per combined
-column (the combination coefficient can cancel a zero-check sum, as noted in
-§3), so the batched-opening section must re-derive its own error bound rather
-than reusing the per-query one.
+Implementation (M2) landed: `src/binius/batchpcs.zig` with standalone
+round-trip and tamper-rejection tests, the STARK dispatch in `stark.zig`, and
+the k = 4..6 size test in `tests/e2e_tests.zig` (which also covers the
+`BiniusStarkFri` batch path; `BiniusArgFri` covers the per-column path).
 
