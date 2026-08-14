@@ -189,28 +189,28 @@ pub fn pairHash(comptime E: type, a: E, b: E) CoreHash.Hash.Digest {
     return CoreHash.Hash.hashBytes(&buf);
 }
 
-fn log2Len(n: usize) usize {
+pub fn log2Len(n: usize) usize {
     std.debug.assert(n != 0 and (n & (n - 1)) == 0);
     return std.math.log2_int(usize, n);
 }
 
 /// Streaming Fiat-Shamir transcript (absorb / sample from a Blake3 chain).
-const Transcript = struct {
+pub const Transcript = struct {
     h: std.crypto.hash.Blake3,
     buf: [64]u8,
     have: usize,
 
-    fn init(bytes: []const u8) Transcript {
+    pub fn init(bytes: []const u8) Transcript {
         var t = Transcript{ .h = std.crypto.hash.Blake3.init(.{}), .buf = undefined, .have = 0 };
         t.absorb(bytes);
         return t;
     }
 
-    fn absorb(self: *Transcript, bytes: []const u8) void {
+    pub fn absorb(self: *Transcript, bytes: []const u8) void {
         self.h.update(bytes);
     }
 
-    fn sample(self: *Transcript) u64 {
+    pub fn sample(self: *Transcript) u64 {
         while (self.have < 8) {
             var out: [32]u8 = undefined;
             self.h.final(&out);
@@ -224,13 +224,13 @@ const Transcript = struct {
     }
 };
 
-fn absorbElem(comptime E: type, t: *Transcript, v: E) void {
+pub fn absorbElem(comptime E: type, t: *Transcript, v: E) void {
     var b: [E.SIZE]u8 = undefined;
     v.toBytes(&b);
     t.absorb(&b);
 }
 
-fn sampleE(comptime E: type, t: *Transcript) E {
+pub fn sampleE(comptime E: type, t: *Transcript) E {
     var b: [E.SIZE]u8 = undefined;
     for (0..E.SIZE) |i| b[i] = @truncate(t.sample());
     return E.fromBytes(b);
@@ -546,7 +546,7 @@ pub fn FriPcs(
     };
 }
 
-fn sampleQueries(
+pub fn sampleQueries(
     allocator: std.mem.Allocator,
     t: *Transcript,
     num_queries: usize,

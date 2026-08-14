@@ -104,8 +104,8 @@ fn biniusAdderFriRoundTrip(k: usize, tamper: bool) !bool {
 
     const F = zig_stark.binius.tower.Gf256;
     const E = zig_stark.binius.tower.Gf2_128;
-    const FriPcs = zig_stark.binius.fripcs.FriPcsStark(F, E, 2, 4);
-    const Adder = zig_stark.binius.adder.AdderWith(F, E, FriPcs);
+    const BatchPcs = zig_stark.binius.batchpcs.BatchFriPcsStark(F, E, 2, 4);
+    const Adder = zig_stark.binius.adder.AdderWith(F, E, BatchPcs);
     const Stark = zig_stark.binius.stark.BiniusStarkFri(F, E, 2, 4);
     const Hash = zig_stark.hash.Hash;
 
@@ -129,7 +129,7 @@ fn biniusAdderFriRoundTrip(k: usize, tamper: bool) !bool {
         bad[Adder.colS(1)][3] = bad[Adder.colS(1)][3].add(F.one());
         var bad_roots: [Adder.num_columns]Hash.Digest = undefined;
         for (0..Adder.num_columns) |c| {
-            var tree = try FriPcs.commit(alloc, bad[c]);
+            var tree = try BatchPcs.commit(alloc, bad[c]);
             bad_roots[c] = tree.root();
         }
         return try Stark.verify(alloc, k, &bad_roots, &Adder.constraints, &.{}, proof, "");
@@ -137,7 +137,7 @@ fn biniusAdderFriRoundTrip(k: usize, tamper: bool) !bool {
 
     var roots: [Adder.num_columns]Hash.Digest = undefined;
     for (0..Adder.num_columns) |c| {
-        var tree = try FriPcs.commit(alloc, columns[c]);
+        var tree = try BatchPcs.commit(alloc, columns[c]);
         roots[c] = tree.root();
     }
     return try Stark.verify(alloc, k, &roots, &Adder.constraints, &.{}, proof, "");
@@ -152,15 +152,27 @@ test "e2e: Binius adder with FRI PCS rejects tampered committed witness" {
 }
 
 /// Field/digest "units" in the PCS eval section of a FRI-PCS Stark proof.
+/// Handles both the per-column `[]EvalProof` section (slice) and the shared
+/// `BatchProof` section (struct) of a batched PCS.
 fn friEvalUnits(proof: anytype) usize {
     var total: usize = 0;
-    for (proof.evals) |e| {
-        const p = e.pcs;
-        total += 2; // claimed value + final folded value
-        total += p.rounds.len * 4; // 3 coeffs + challenge per round
-        total += p.layer_roots.len;
-        for (p.queries) |q| {
+    if (@hasField(@TypeOf(proof.evals), "values")) {
+        const b = proof.evals;
+        total += b.values.len + b.final_folded.len;
+        for (b.rounds) |r| total += r.coeffs.len + 1;
+        total += b.layer_roots.len;
+        for (b.queries) |q| {
             for (q.layers) |lp| total += 2 + lp.path.len;
+        }
+    } else {
+        for (proof.evals) |e| {
+            const p = e.pcs;
+            total += 2; // claimed value + final folded value
+            total += p.rounds.len * 4; // 3 coeffs + challenge per round
+            total += p.layer_roots.len;
+            for (p.queries) |q| {
+                for (q.layers) |lp| total += 2 + lp.path.len;
+            }
         }
     }
     return total;
@@ -189,10 +201,10 @@ test "e2e: FRI PCS proof size is sub-linear vs committed-MLE (k = 4..6)" {
     const F = zig_stark.binius.tower.Gf256;
     const E = zig_stark.binius.tower.Gf256;
     const Hash = zig_stark.hash.Hash;
-    const FriPcs = zig_stark.binius.fripcs.FriPcsStark(F, E, 2, 4);
+    const BatchPcs = zig_stark.binius.batchpcs.BatchFriPcsStark(F, E, 2, 4);
     const CommittedPcs = zig_stark.binius.pcs.CommittedMlePcs(F, E);
 
-    const AdderFri = zig_stark.binius.adder.AdderWith(F, E, FriPcs);
+    const AdderFri = zig_stark.binius.adder.AdderWith(F, E, BatchPcs);
     const StarkFri = zig_stark.binius.stark.BiniusStarkFri(F, E, 2, 4);
     const AdderCm = zig_stark.binius.adder.AdderWith(F, E, CommittedPcs);
     const StarkCm = zig_stark.binius.stark.BiniusStarkWith(F, E, CommittedPcs);
@@ -213,7 +225,7 @@ test "e2e: FRI PCS proof size is sub-linear vs committed-MLE (k = 4..6)" {
         defer pf.deinit(alloc);
         var roots: [AdderFri.num_columns]Hash.Digest = undefined;
         for (0..AdderFri.num_columns) |c| {
-            var tree = try FriPcs.commit(alloc, cols[c]);
+            var tree = try BatchPcs.commit(alloc, cols[c]);
             roots[c] = tree.root();
         }
         try std.testing.expect(try StarkFri.verify(alloc, k, &roots, &AdderFri.constraints, &.{}, pf, ""));

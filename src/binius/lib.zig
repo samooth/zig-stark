@@ -11,6 +11,7 @@ pub const bitpack = @import("bitpack.zig");
 pub const tower = @import("tower.zig");
 pub const pack = @import("pack.zig");
 pub const packed_pcs = @import("packed_pcs.zig");
+pub const batchpcs = @import("batchpcs.zig");
 pub const addfri = @import("addfri.zig");
 pub const fripcs = @import("fripcs.zig");
 

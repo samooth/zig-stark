@@ -2,6 +2,7 @@ const std = @import("std");
 const SumcheckMod = @import("sumcheck.zig");
 const PcsMod = @import("pcs.zig");
 const FriPcsMod = @import("fripcs.zig");
+const BatchPcsMod = @import("batchpcs.zig");
 const CoreHash = @import("../core/hash/hash.zig");
 const Channel = @import("../core/channel/channel.zig").Channel;
 
@@ -63,7 +64,7 @@ pub fn BiniusStarkFri(
     comptime log_blowup: u8,
     comptime num_queries: usize,
 ) type {
-    return StarkInner(F, E, FriPcsMod.FriPcsStark(F, E, log_blowup, num_queries));
+    return StarkInner(F, E, BatchPcsMod.BatchFriPcsStark(F, E, log_blowup, num_queries));
 }
 
 /// Same zero-check STARK, but with a caller-chosen committed-MLE PCS. The PCS
@@ -114,20 +115,31 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
             pcs: CP.Proof,
         };
 
+        /// Whether the plugged PCS batches all distinct columns into one
+        /// opening (`proveEvalBatch` / `verifyEvalBatch` on `CP`). Batched
+        /// PCS share one FRI proof (and its Merkle paths) across columns.
+        pub const has_batch = @hasDecl(CP, "proveEvalBatch");
+
         pub const Proof = struct {
             /// Single zero-check sum-check over the random-linear combination
             /// of all constraints; its claimed sum is zero.
             sumcheck: SC.Proof,
-            /// One eval proof per *distinct* factor column, at the sum-check's
-            /// challenge point, in first-occurrence order of `factors`.
-            evals: []EvalProof,
+            /// Evaluation section: one proof per *distinct* factor column at
+            /// the sum-check's challenge point (per-column PCS), or a single
+            /// batched proof over all distinct columns (batched PCS), in
+            /// first-occurrence order of `factors`.
+            evals: if (has_batch) CP.BatchProof else []EvalProof,
 
             /// Owns `sumcheck` and `evals` (and each nested PCS proof); release
             /// with `deinit(allocator)` using the allocator passed to `prove`.
             pub fn deinit(self: *Proof, allocator: std.mem.Allocator) void {
                 self.sumcheck.deinit(allocator);
-                for (self.evals) |*e| e.pcs.deinit(allocator);
-                allocator.free(self.evals);
+                if (has_batch) {
+                    self.evals.deinit(allocator);
+                } else {
+                    for (self.evals) |*e| e.pcs.deinit(allocator);
+                    allocator.free(self.evals);
+                }
             }
         };
 
@@ -422,6 +434,19 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
                 }
             }
 
+            if (has_batch) {
+                const batch_tables = try allocator.alloc([]const F, count);
+                defer allocator.free(batch_tables);
+                const batch_roots = try allocator.alloc(Hash.Digest, count);
+                defer allocator.free(batch_roots);
+                for (0..count) |l| {
+                    batch_tables[l] = columns[distinct[l]];
+                    batch_roots[l] = roots[distinct[l]];
+                }
+                const bp = try CP.proveEvalBatch(allocator, k, batch_tables, batch_roots, rr.challenges);
+                return .{ .sumcheck = sp, .evals = bp };
+            }
+
             const evals = try allocator.alloc(EvalProof, count);
             errdefer allocator.free(evals);
             for (0..count) |l| {
@@ -512,14 +537,27 @@ fn StarkInner(comptime F: type, comptime E: type, comptime CP: type) type {
                     }
                 }
             }
-            if (proof.evals.len != count) return false;
+            if (has_batch) {
+                if (proof.evals.values.len != count) return false;
+            } else {
+                if (proof.evals.len != count) return false;
+            }
 
             const value_of = try allocator.alloc(E, m);
             defer allocator.free(value_of);
-            for (0..count) |l| {
-                const ok = try CP.verifyEval(allocator, roots[distinct[l]], k, rr.challenges, proof.evals[l].pcs);
+            if (has_batch) {
+                const batch_roots = try allocator.alloc(Hash.Digest, count);
+                defer allocator.free(batch_roots);
+                for (0..count) |l| batch_roots[l] = roots[distinct[l]];
+                const ok = try CP.verifyEvalBatch(allocator, batch_roots, k, rr.challenges, proof.evals);
                 if (!ok) return false;
-                value_of[distinct[l]] = proof.evals[l].value;
+                for (0..count) |l| value_of[distinct[l]] = proof.evals.values[l];
+            } else {
+                for (0..count) |l| {
+                    const ok = try CP.verifyEval(allocator, roots[distinct[l]], k, rr.challenges, proof.evals[l].pcs);
+                    if (!ok) return false;
+                    value_of[distinct[l]] = proof.evals[l].value;
+                }
             }
 
             // Final value of the combined summand at the challenge point:
