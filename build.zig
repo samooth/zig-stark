@@ -239,4 +239,24 @@ pub fn build(b: *std.Build) void {
     } else {
         node_addon_step.addError("{s}", .{"pass -Dnapi-include=<dir> (e.g. $HOME/.nvm/versions/node/vXX/include/node)"}) catch {};
     }
+
+    // CUDA (E0a toolchain validation). Kernels are CUDA C -> PTX (committed in
+    // src/cuda/kernels/) embedded into the test binary; the driver JITs them at
+    // load. `cuda-hello` builds + runs the vecAdd validation kernel (requires a
+    // GPU + CUDA driver); `cuda-kernels` regenerates the PTX with nvcc.
+    const cuda_kernels_step = b.step("cuda-kernels", "Regenerate src/cuda/kernels/*.ptx with nvcc (requires nvcc)");
+    const nvcc = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/vecAdd.ptx", "src/cuda/kernels/vecAdd.cu" });
+    cuda_kernels_step.dependOn(&nvcc.step);
+
+    const cuda_hello_step = b.step("cuda-hello", "Build+run the CUDA hello kernel (requires GPU + driver)");
+    const hello_mod = b.createModule(.{
+        .root_source_file = b.path("src/cuda/hello_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    hello_mod.linkSystemLibrary("cuda", .{});
+    const hello_exe = b.addExecutable(.{ .name = "cuda_hello", .root_module = hello_mod });
+    const run_hello = b.addRunArtifact(hello_exe);
+    cuda_hello_step.dependOn(&run_hello.step);
 }
