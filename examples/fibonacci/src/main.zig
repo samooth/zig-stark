@@ -4,7 +4,7 @@ const channel = @import("zig-stark").channel;
 const stark = @import("zig-stark").stark;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const alloc = gpa.allocator();
 
     const Channel = channel.Channel;

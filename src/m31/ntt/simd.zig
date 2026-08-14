@@ -32,7 +32,7 @@ test "simd butterfly matches classic NTT (n = 2)" {
 
     var a = try alloc.dupe(M31, &input);
     defer alloc.free(a);
-    var b = try alloc.dupe(M31, &input);
+    const b = try alloc.dupe(M31, &input);
     defer alloc.free(b);
 
     simdButterfly(a, false);

@@ -70,7 +70,7 @@ fn runField(comptime F: type, comptime E: type, alloc: std.mem.Allocator, rnd: s
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const alloc = gpa.allocator();
     var prng = std.Random.DefaultPrng.init(0xbeefcafe);
     const rnd = prng.random();

@@ -347,7 +347,7 @@ pub fn BatchFriPcs(
             var tmp = std.heap.ArenaAllocator.init(allocator);
             defer tmp.deinit();
             const ta = tmp.allocator();
-            var ntt = try Ntt(F).init(ta, D);
+            const ntt = try Ntt(F).init(ta, D);
             const twE = try ta.alloc([]E, D);
             for (0..D) |i| {
                 twE[i] = try ta.alloc(E, ntt.twiddles[i].len);

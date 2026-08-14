@@ -27,7 +27,7 @@ fn commitRoots(allocator: std.mem.Allocator, columns: []const []const F) ![BitPa
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const alloc = gpa.allocator();
 
     // One independent 8-bit value per hypercube point: 16 in a batch.

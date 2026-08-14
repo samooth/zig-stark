@@ -120,7 +120,7 @@ const LinearAir = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const alloc = gpa.allocator();
 
     const x = try alloc.alloc(QM31, LinearAir.n);

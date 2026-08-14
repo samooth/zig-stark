@@ -85,7 +85,7 @@ fn benchNaive(half_coset: CircleCoset, coeffs: []const M31, evals: []M31, budget
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const alloc = gpa.allocator();
     var prng = std.Random.DefaultPrng.init(0xdeadbeef);
     const rnd = prng.random();

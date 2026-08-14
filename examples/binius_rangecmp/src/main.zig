@@ -60,7 +60,7 @@ fn commitRoots(allocator: std.mem.Allocator, columns: []const []const F) ![num_c
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     const alloc = gpa.allocator();
 
     // One independent step of a strictly increasing bounded sequence per point:
