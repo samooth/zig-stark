@@ -305,10 +305,72 @@ binius bit-pack gadget batch (16 values, k=4, 8-bit)
   verifier rejected altered boundary pin: true
 ```
 
+## Binius range-check and comparison gadgets
+
+`examples/binius_rangecmp/src/main.zig`
+
+The `bitpack` gadget is the primitive for range checks: a value `v < 2^m`
+whose bits are columns `b_0 .. b_{m-1}` is enforced by `m` booleanity
+equations plus one pack equation `v = Σ_i b_i·e_i`. `RangeCheck(F, E, m)`
+(`src/binius/rangecheck.zig`) is exactly `BitPack` parameterized by bit count,
+so `RangeCheck(F, E, 8)` is a valid `u8` check and `RangeCheck(F, E, m)`
+bounds a value in `[0, 2^m)` for any `m ≤ F.BITS`.
+
+`Compare(F, E, m)` (`src/binius/compare.zig`) proves `<` (and, with it, `≤`,
+`>`, `≥`, and `==`) between two bit-sliced values `a`, `b` in `[0, 2^m)`. The
+witness is four `m`-wide column groups — bits of `a`, bits of `b`, an equality
+chain `eq`, and a less-than chain `lt` — with the classic recurrence
+
+```
+eq_m = 1,    eq_i = eq_{i+1} ∧ (a_i = b_i)
+lt_m = 0,    lt_i = lt_{i+1} ∨ (eq_{i+1} ∧ a_i < b_i)
+```
+
+The zero-check proves `eq_i + eq_{i+1}(1 + a_i + b_i) = 0` and
+`lt_i + lt_{i+1} + eq_{i+1}(b_i + a_i b_i) = 0` for all `i`. Note the
+`lt` recurrence is *not* constant-free: the `lt_m = 0` base needs the identity
+`eq_m = 1`, a constant monomial. This is legal because the zero-check does not
+sum the constraint over the hypercube in the usual sense — it evaluates it at
+a random point `τ` via `Σ_x C(x)·β_τ(x) = C(τ)`, and `Σ_x β_τ(x) = 1`, so a
+constant term is enforced like any other.
+
+Because gadgets are just arrays of monomials, several can be composed into a
+single proof with the comptime DSL in `src/binius/constraints.zig`. A
+`Builder(C, n, max_terms)` accumulates constraints and calls `finish()` to
+materialize a static monomial pool; `shiftInto(B, &b, t0, col_offset, src)`
+appends a gadget's constraints with remapped column indices. The example
+composes **two range checks and one comparison** and then links the range-check
+bit columns to the comparison's `a`/`b` bit columns with 8 linear equations, so
+the range-checked values *are* the compared ones:
+
+- `2·5 + 16 = 26` witness columns (bits + packed value per range check, then
+  the compare's four `m`-wide groups),
+- `2·5 + 16 + 8 = 34` constraints,
+- a statement of the form "the sequence `seq[0..n+1]` is strictly increasing
+  and each element fits in `u4`", with `seq[0]` and `seq[n]` pinned as public
+  boundary assertions.
+
+Running it (`k = 3`, 8 steps, Debug build):
+
+```
+binius range-check + comparison batch (8 steps, k=3, [0, 2^4))
+  columns:    26 (2 range checks x 5 + compare x 16)
+  constraints:34 (2x5 + 16 + 8 value links)
+  prove:      213.36 ms
+  verify:     20.01 ms
+  verifier accepted proof: true
+  seq[0] = 0, seq[8] = 15 pinned as public inputs
+  verifier rejected tampered commitment: true
+  verifier rejected forged witness (out-of-range + unordered): true
+  verifier rejected altered public input: true
+  verifier rejected altered boundary pin: true
+```
+
 ## Writing a custom Binius gadget
 
-The adder and bit-pack gadgets are the two reference implementations of the
-`BiniusStarkWith` interface. A gadget is a struct type with four pieces:
+The adder, bit-pack, range-check, and comparison gadgets are the reference
+implementations of the `BiniusStarkWith` interface. A gadget is a struct type
+with four pieces:
 
 ```zig
 const MyGadget = struct {

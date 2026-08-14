@@ -4,8 +4,9 @@ Current status: zero-check STARK over the tower field with a pluggable
 committed-MLE PCS (`BiniusStarkWith`): the O(2^k) `CommittedMlePcs`, the
 sub-linear `PackedPcs`, and the sub-linear polylog FRI-Binius PCS
 (`fripcs.zig`, FRI-fold in lockstep with the eval sum-check). Extension-field
-`(F, E)` soundness mode, boundary pins, and two gadgets (4-bit adder,
-bit-pack). 196 tests (187 unit + 9 end-to-end).
+`(F, E)` soundness mode, boundary pins, and five gadgets (4-bit adder,
+bit-pack, range check, comparison, constraint DSL). 205 tests (196 unit + 9
+end-to-end).
 
 ## 1. Sub-linear MLE evaluation / commitment (HIGH, DONE — polylog route landed)
 
@@ -81,12 +82,19 @@ the concrete `(Gf256, Gf2_128)` figure (~2^-123 algebraic error), the
 packing/evaluation identity with proof. `docs/overview.md` keeps the informal
 ≈1/|E| note.
 
-## 4. More binius AIRs / gadget framework (MEDIUM)
+## 4. More binius AIRs / gadget framework (DONE — range check + comparison + DSL)
 
-The 4-bit adder and the bit-pack gadget (`src/binius/bitpack.zig`) are the two
-reference implementations of the `BiniusStarkWith` interface. Next candidates:
-range check and bit-sliced comparison built on `BitPack`, and a small
-constraint DSL if a third gadget wants shared helper terms.
+The 4-bit adder, the bit-pack gadget (`src/binius/bitpack.zig`), the range
+check (`src/binius/rangecheck.zig`, `RangeCheck(F, E, m)` bounds a value in
+`[0, 2^m)` via `m` booleanity + one pack equation), and the bit-sliced
+comparison (`src/binius/compare.zig`, `Compare(F, E, m)` proves `<` / `==`
+with eq/lt chains and a constant `eq_m = 1` base, legal because the zero-check
+evaluates `C(τ)` rather than summing over the hypercube) are the reference
+implementations of the `BiniusStarkWith` interface. The constraint DSL
+(`src/binius/constraints.zig`: comptime `Builder(C, n, max_terms)` +
+`shiftInto`) composes several gadgets into one proof; `examples/binius_rangecmp`
+proves a bounded strictly-increasing sequence with 2 range checks + 1
+comparison + 8 value links (26 columns, 34 constraints).
 
 ## 4b. Batched / batched-VSB commitments (HIGH, DONE — M2, committed)
 

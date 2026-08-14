@@ -26,6 +26,32 @@ breaking changes.
   is the primitive for range checks and bit manipulation. `BitPack(F, E)` and
   `BitPackWith(F, E, CP)` mirror the adder gadget's `generateWitness` /
   `freeWitness` / `result` API.
+- `src/binius/rangecheck.zig`: a range-check gadget `RangeCheck(F, E, m)` =
+  `BitPack` parameterized by bit count, bounding a committed value in
+  `[0, 2^m)` for any `m ≤ F.BITS` (`m + 1` columns, `m + 1` constraints:
+  `m` booleanity + one pack). `RangeCheckWith(F, E, m, CP)` swaps in a custom
+  PCS.
+- `src/binius/compare.zig`: a bit-sliced comparison gadget `Compare(F, E, m)`
+  proving `<` / `≤` / `>` / `≥` / `==` between two `m`-bit values. Witness is
+  four `m`-wide column groups (bits of `a`, bits of `b`, equality chain `eq`,
+  less-than chain `lt`); constraints are the recurrences
+  `eq_i = eq_{i+1} ∧ (a_i = b_i)` and
+  `lt_i = lt_{i+1} ∨ (eq_{i+1} ∧ a_i < b_i)` (16m constraints, ≤ `14m`
+  monomials). The `lt_m = 0` base uses the constant `eq_m = 1`; constant terms
+  are sound because the zero-check evaluates `Σ_x C(x)·β_τ(x) = C(τ)` with
+  `Σ_x β_τ(x) = 1`.
+- `src/binius/constraints.zig`: a comptime constraint DSL for composing
+  gadgets in one proof. `Builder(C, n, max_terms)` accumulates constraints
+  (`add`, `@"bool"`) into a monomial pool; `finish()` materializes it as a
+  comptime const (a comptime `var` cannot be referenced by a global);
+  `shiftInto(B, &b, t0, col_offset, src)` appends another gadget's constraints
+  with remapped column indices. Used by `examples/binius_rangecmp`.
+- `examples/binius_rangecmp`: an end-to-end example composing two range checks
+  and one comparison in a single proof (26 columns, 34 constraints: `2·5 +
+  16` gadget constraints plus 8 linear value links equating the range-check
+  bit columns to the comparison's `a`/`b` columns). Proves a sequence
+  `seq[0..n+1]` is strictly increasing with every element in `[0, 16)`;
+  `seq[0]` and `seq[n]` are pinned as public boundary assertions.
 - `examples/binius_bitpack`: an end-to-end example proving a batch of 16
   8-bit values, with the first value pinned as a public statement.
 - `docs/examples.md`: a "Writing a custom Binius gadget" section with a

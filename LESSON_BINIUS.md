@@ -228,3 +228,40 @@ coefficient `f(r)/d`.
   `friEvalUnits` (`@hasField` dispatch on the eval section).
 - Remaining design options (still future work): λ-combined FRI queries, a
   Brakedown-style batched sumcheck, and tower-size-1 packing.
+
+## Range check, comparison, and the constraint DSL
+
+- `RangeCheck(F, E, m)` is literally `BitPack` with a parameterized bit count
+  (`m ≤ F.BITS`): `m` booleanity + one pack equation. A range check in
+  `[0, 2^m)` is "the bit columns are boolean and pack to the value".
+- `Compare(F, E, m)` uses the classic eq/lt chains with `eq_m = 1`, `lt_m = 0`
+  (result is `lt_0`): `eq_i = eq_{i+1} ∧ (a_i = b_i)`, `lt_i = lt_{i+1} ∨
+  (eq_{i+1} ∧ a_i < b_i)`, enforced as `eq_i + eq_{i+1}(1 + a_i + b_i) = 0` and
+  `lt_i + lt_{i+1} + eq_{i+1}(b_i + a_i b_i) = 0`.
+- **Constant terms are legal.** I first assumed the zero-check was a plain
+  hypercube sum (where a constant contributes `Σ_x 1 = 2^k ≡ 0` in char 2) and
+  built a constant-free `ne` chain. That was wrong: the zero-check evaluates at
+  a random point via `Σ_x C(x)·β_τ(x) = C(τ)`, and `Σ_x β_τ(x) = 1`, so `eq_m =
+  1` as a constant monomial (`&.{}` empty factors) is sound. The round-trip
+  still failed after the rewrite, and the bug was different: I'd left
+  un-premultiplied `b_i + a_i b_i` terms in the `lt` constraint (from the old
+  `ne` design), turning `lt_i + lt_{i+1} + eq_{i+1}(b_i + a_i b_i) = 0` into
+  `lt_i + lt_{i+1} + (1 + a_i)b_i(1 + eq_{i+1}) = 0`. Symptom: prove succeeds,
+  verify rejects. Lesson: when a recurrence has a "base" like `eq_m = 1`, the
+  factored `(b + ab)` terms must be premultiplied by the chain factor for the
+  general case and dropped there — only the base case gets the bare terms.
+- **The DSL.** `src/binius/constraints.zig`: a comptime `Builder(C, n,
+  max_terms)` with `add(t, coeff, factors)`, `@"bool"` (the primitive `bool`
+  must be `@"bool"`-quoted to reference the type), and `finish()` returning a
+  `comptime const` pool — a comptime `var` can't be referenced by a global
+  `constraints` array, so the pool must be materialized by a comptime function
+  returning by value. `shiftInto` appends another gadget's constraints with a
+  column offset for composition.
+- **The combined example** (`binius_rangecmp`) shows the payoff: two range
+  checks + one comparison in one proof, with 8 *linear* value links equating
+  the range-check bit columns to the compare's `a`/`b` columns (a linear
+  combination per link). With the links, the range-checked values ARE the
+  compared ones, so the statement is genuinely "this sequence is strictly
+  increasing and bounded in `[0, 16)`" with `seq[0]`, `seq[n]` pinned as public
+  boundary inputs. A forged witness violating either property (an out-of-range
+  value at one point, or one swapped unordered pair) is rejected.
