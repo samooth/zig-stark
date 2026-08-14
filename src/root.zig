@@ -3,6 +3,7 @@ const std = @import("std");
 // Module namespaces
 pub const core = @import("core/lib.zig");
 pub const binius = @import("binius/lib.zig");
+pub const capi = @import("capi.zig");
 
 // M31 / CM31 / QM31 field tower
 pub const m31 = @import("m31/field/m31.zig");

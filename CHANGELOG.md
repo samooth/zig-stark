@@ -8,6 +8,21 @@ breaking changes.
 
 ### Added
 
+- **C ABI for the Binius STARK** (`src/capi.zig`, `zig-capi.h`): a fixed
+  `Gf256`/`Gf2_128`/`CommittedMlePcs` instantiation exposing `zs_binius_prove`,
+  `zs_binius_verify`, `zs_free` and `zs_version` over the canonical serialized
+  wire format, with a host-supplied allocator (ctx + alloc/free callbacks) that
+  wraps the alignment/header handling. Round-trip and tamper tests run the full
+  vtable path under the leak-checking allocator. A `zig build wasm` step emits a
+  `wasm32-freestanding` module (~64 KB ReleaseSmall) exporting the four symbols
+  for Node.js / browsers.
+- **Fuzz** (`tests/fuzz.zig`, `zig build fuzz`): randomized RangeCheck / Compare
+  / Adder iterations that prove+verify valid witnesses and reject a tampered
+  serialized proof, leak-checked. (Rejection uses a flipped proof byte rather
+  than a witness tamper, which the zero-check can miss in a small field.)
+- **CI jobs**: wasm C-ABI build and the gadget fuzz, plus the existing suite now
+  also runs in ReleaseFast.
+
 - **CI** (`.github/workflows/ci.yml`): `zig build fmt`, `zig build`, and
   `zig build test` on every push/PR, on Zig 0.16.0 stable via
   `ziglang/setup-zig`; CI badge in the README.

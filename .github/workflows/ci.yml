@@ -24,3 +24,32 @@ jobs:
 
       - name: Run unit and e2e tests
         run: zig build test
+
+      - name: Run tests in ReleaseFast
+        run: zig build test -Doptimize=ReleaseFast
+
+  wasm:
+    name: wasm C ABI (wasm32-freestanding)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ziglang/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build the wasm C-ABI module
+        run: zig build wasm -Doptimize=ReleaseSmall
+
+  fuzz:
+    name: gadget fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ziglang/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run randomized gadget fuzz
+        run: zig build fuzz

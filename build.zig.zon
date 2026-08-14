@@ -9,6 +9,7 @@
         "build.zig.zon",
         "Dockerfile",
         "LICENSE",
+        "zig-capi.h",
         "src",
         "examples",
         "tests",

@@ -177,4 +177,39 @@ pub fn build(b: *std.Build) void {
     const fmt_check = b.addFmt(.{ .paths = &.{"."}, .check = true });
     const fmt_step = b.step("fmt", "Check code formatting (zig fmt --check)");
     fmt_step.dependOn(&fmt_check.step);
+
+    // C ABI as a wasm32-freestanding module (browser / Node.js).
+    const wasm_step = b.step("wasm", "Build the C ABI as a wasm32-freestanding module");
+    const capi_wasm = b.addExecutable(.{
+        .name = "zig_stark_capi",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/capi.zig"),
+            .target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding }),
+            .optimize = optimize,
+        }),
+    });
+    capi_wasm.entry = .disabled; // pure export module, no _start
+    capi_wasm.root_module.export_symbol_names = &.{
+        "zs_binius_prove", "zs_binius_verify", "zs_free", "zs_version",
+    };
+    const install_wasm = b.addInstallArtifact(capi_wasm, .{ .dest_sub_path = "zig_stark_capi.wasm" });
+    wasm_step.dependOn(&install_wasm.step);
+
+    // Fuzz / property stress: randomized gadget round-trips and tamper
+    // rejection under the leak-checking allocator.
+    const fuzz_exe = b.addExecutable(.{
+        .name = "fuzz",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/fuzz.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig-stark", .module = lib },
+            },
+        }),
+    });
+    const run_fuzz = b.addRunArtifact(fuzz_exe);
+    run_fuzz.addArg("2000");
+    const fuzz_step = b.step("fuzz", "Run randomized gadget fuzz (prove/verify/tamper)");
+    fuzz_step.dependOn(&run_fuzz.step);
 }
