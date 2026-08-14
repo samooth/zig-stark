@@ -1,5 +1,7 @@
 # zig-stark
 
+[![CI](https://github.com/samooth/zig-stark/actions/workflows/ci.yml/badge.svg)](https://github.com/samooth/zig-stark/actions/workflows/ci.yml)
+
 A STARK (Scalable Transparent Argument of Knowledge) proof system implemented in Zig, with two stacks: a DEEP-FRI STARK over the M31 / CM31 / QM31 field tower (Mersenne prime fields), and a Binius/BSV-style binary-field stack over the canonical tower of GF(2^k) using zero-check constraints enforced by sum-check with Merkle-committed multilinear polynomials.
 
 ## Status
@@ -14,6 +16,7 @@ Working end-to-end on both stacks:
 ## Documentation
 
 - [`docs/overview.md`](docs/overview.md) — architecture, field tower, module layout, build/test/run instructions
+- [`docs/api.md`](docs/api.md) — consumer-facing API reference and how to depend on zig-stark as a library
 - [`docs/protocol.md`](docs/protocol.md) — the full DEEP-FRI protocol: composition, quotient, DEEP combination, FRI, and the exact transcript order
 - [`docs/examples.md`](docs/examples.md) — how the Fibonacci and linear-ML examples work, and how to write a new AIR
 - [`docs/binius.md`](docs/binius.md) — the binary-field stack's soundness: transcript order, every Schwartz-Zippel error term, concrete `(Gf256, Gf2_128)` security, the FRI final-check and packing identities
@@ -64,7 +67,9 @@ Modules are exported via `src/root.zig` (`core`, `m31`, `binius` namespaces), so
 
 ## Building
 
-Requires Zig 0.16.x.
+Requires Zig 0.16.0 (stable). The exact toolchain is pinned in CI
+(`.github/workflows/ci.yml`) and in the `Dockerfile` (SHA-256 verified); a
+reproducible shell is `docker run --rm zig-stark zig build test`.
 
 ```sh
 zig build            # build examples
@@ -92,6 +97,42 @@ Run the examples:
 - `Gf16` / `Gf256` — `BinaryField` over GF(2^4) / GF(2^8) (`src/binius/field.zig`), small script-friendly witness fields.
 - `tower.Gf2 .. Gf2_128` — the canonical Wiedemann tower of binary fields (`src/binius/tower.zig`); `Gf2_128 = TowerField(7)` is the usual soundness extension field `E` (≈ 2^-128 Schwartz-Zippel error) for a small base `F`.
 
+## Benchmarks
+
+Numbers below are wall-clock on an **AMD Ryzen 7 5800H** (Linux x86_64), Zig
+0.16.0 stable, `-Doptimize=ReleaseFast`, single-threaded, from
+`zig build bench` and `zig build bench-binius`. Run them yourself with
+`zig build bench -Doptimize=ReleaseFast` / `zig build bench-binius
+-Doptimize=ReleaseFast`.
+
+**Circle FFT** (times in ns per transform over M31):
+
+```
+lg    n        fft       ifft    naive   speedup
+ 8   256      89069     114042   488361   5.5x
+10  1024     314060     378928  6174127  19.7x
+12  4096    1308518    1507427        -       -
+14 16384    5056218    5801445        -       -
+16 65536   21785973   24592493        -       -
+```
+
+**Binius zero-check STARK** — a batch of 4-bit additions (16 columns, 16
+constraints), `F = Gf256`, soundness extension `E = Gf2_128`, eval-openings
+(`CommittedMlePcs`):
+
+```
+   k      n   prove_ms  verify_ms  sumcheck_B  eval_open_B   total_KB
+   3      8       6.15       0.73         288        12416       12.4
+   5     32      45.71       3.32         640        82432       81.1
+   7    128     275.67      16.87        1120       460800      451.1
+   9    512    1610.21      84.32        1728      2367488     2313.7
+  11   2048    8751.21     404.21        2464     11567104    11298.4
+```
+
+The eval-open section grows O(2^k·k) (it opens every hypercube entry per
+column); the polylog FRI-Binius PCS (`BiniusStarkFri`) replaces it with an
+O(polylog) proof (see the k = 4..6 proof-size e2e test).
+
 ## Releases
 
 See [`CHANGELOG.md`](CHANGELOG.md) for per-version changes. Released versions
@@ -100,4 +141,4 @@ bumps may break the API and are documented in the changelog.
 
 ## License
 
-See `build.zig.zon` for module metadata. See `TODO.md` for the roadmap.
+Copyright 2026 Tomás Díaz. Licensed under the [Apache License, Version 2.0](LICENSE).

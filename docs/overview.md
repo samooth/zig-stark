@@ -113,7 +113,9 @@ All six prove a statement, verify it, and reject a forged claim.
 
 ## Soundness of the committed protocol
 
-The protocol is described in detail in [`protocol.md`](protocol.md). Three
+The protocol is described in detail in [`protocol.md`](protocol.md), with a
+consumer-facing API reference and library-integration guide in
+[`api.md`](api.md). Three
 soundness-relevant properties of this implementation deserve emphasis:
 
 1. **The FRI remainder is a proper code.** The final folded layer is a codeword

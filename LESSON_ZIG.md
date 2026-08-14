@@ -2,13 +2,18 @@
 
 Session notes on Zig itself, gathered while porting the stwo circle FFT to Zig and
 adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
-(0.16.0-dev), not generic Zig 101.
+(Zig 0.16.0 stable, released 2026-04-13), not generic Zig 101.
 
 ## Toolchain & build system
 
-- The project's Zig is a 0.16.0-dev build (pre-release). Several std APIs differ
-  from 0.14/0.15 (see "std.time" and "Format strings" below). Always check the
-  actual std in `zig env` / the std lib before assuming an API exists.
+- The project targets Zig 0.16.0 stable. It was developed against a 0.16.0-dev
+  build; the compatibility pass (commit `2e3e0fc`) fixed the two API changes the
+  stable release introduced: `std.heap.GeneralPurposeAllocator` (a dev-era alias
+  for `DebugAllocator`) is gone, and the never-mutated check now fires on `Ntt`
+  instances held in arena scopes and a test slice, so those are `const`. Several
+  std APIs differ from 0.14/0.15 (see "std.time" and "Format strings" below).
+  Always check the actual std in `zig env` / the std lib before assuming an API
+  exists.
 - Build API: modules are declared with `b.addModule`; per-artifact modules with
   `b.createModule(.{ .root_source_file = ..., .target, .optimize, .imports })`.
   Executables/tests use `b.addExecutable` / `b.addTest` + `b.addRunArtifact`.
@@ -28,9 +33,9 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
 
 ## std.time has no Timer / Instant
 
-- In this 0.16.0-dev, `std.time` contains only `epoch` and the `ns_per_*` /
-  `us_per_*` / `ms_per_*` constants — `std.time.Timer` and `Instant` are gone
-  (moved to the new async `std.Io` layer).
+- In Zig 0.16.0 (stable and dev), `std.time` contains only `epoch` and the
+  `ns_per_*` / `us_per_*` / `ms_per_*` constants — `std.time.Timer` and
+  `Instant` are gone (moved to the new async `std.Io` layer).
 - Fallback used for the benchmark: Linux monotonic clock directly:
   `std.os.linux.clock_gettime(.MONOTONIC, &ts)` with `std.posix.timespec`.
 - Gotcha: in this build `timespec` fields are named `.sec` / `.nsec` (not
@@ -89,7 +94,7 @@ adding benchmarks/tests. Focused on the quirks of the exact toolchain in use
 - Sign commits with `git commit -S`; verify with `git log --show-signature -1`.
 - Keep temporary reference clones out of git (`.tmp/` added to `.gitignore`).
 
-## 0.16.0-dev std gotchas (Additive FRI session)
+## 0.16.0 std gotchas (Additive FRI session)
 
 - `std.ArrayList` has no `init(allocator)` in this build; the type only exposes `empty`,
   `initCapacity`, `initBuffer`. When the element count is known up front (FRI layers,
