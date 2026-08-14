@@ -78,6 +78,7 @@ src/
     addfri.zig  Additive FRI low-degree test over the tower field
     arg.zig     Argument composition (sum-check + committed PCS)
     capi.zig    C ABI for the Binius STARK (host allocator, wire-format I/O)
+  cuda/         Experimental CUDA Driver API bindings + PTX kernels (opt-in)
 examples/
   fibonacci/    STARK proving a Fibonacci sequence
   rescue/       STARK proving a Rescue permutation (degree-5 sbox)
@@ -94,11 +95,18 @@ docs/           This documentation
 
 ## Building and testing
 
-Requires Zig 0.16.x.
+Requires Zig 0.16.0 stable.
 
 ```sh
 zig build            # builds the example executables
 zig build test       # runs the library unit tests and e2e tests
+zig build fmt        # checks formatting
+zig build bench      # NTT benchmarks (-Doptimize=ReleaseFast recommended)
+zig build bench-binius # Binius STARK benchmarks
+zig build wasm       # C ABI as a wasm32 module (bindings/js)
+zig build fuzz       # randomized gadget fuzz (prove/verify/tamper)
+zig build node-addon -Dnapi-include=<node/include/dir> # Node.js N-API addon
+zig build cuda-hello # CUDA validation kernel (GPU + driver); cuda-kernels regenerates the PTX
 zig test src/root.zig # equivalent unit-test entry point
 ```
 
