@@ -230,6 +230,36 @@ fn verify(
     return try Stark.verify(alloc, k, roots, constraints, pins, proof, domain);
 }
 
+/// Commit the witness columns and return the serialized `[]const Hash.Digest`
+/// roots (one per column), allocated with `host`.
+pub export fn zs_binius_commit(
+    host: HostAllocator,
+    k: u8,
+    columns_ptr: ?[*]const u8,
+    columns_len: usize,
+    out_roots: *[*]u8,
+    out_len: *usize,
+) callconv(.c) c_int {
+    _ = k;
+    const alloc = makeAllocator(&host);
+    const columns = Ser.deserialize(alloc, sliceOf(columns_ptr, columns_len), []const []const F) catch |err| return errCode(err);
+    defer {
+        for (columns) |c| alloc.free(c);
+        alloc.free(columns);
+    }
+    const roots = alloc.alloc(Hash.Digest, columns.len) catch return -3;
+    defer alloc.free(roots);
+    for (0..columns.len) |c| {
+        var tree = @import("binius/pcs.zig").CommittedMlePcs(F, E).commit(alloc, columns[c]) catch return -3;
+        defer tree.deinit();
+        roots[c] = tree.root();
+    }
+    const bytes = Ser.serialize(alloc, roots) catch return -3;
+    out_roots.* = bytes.ptr;
+    out_len.* = bytes.len;
+    return 0;
+}
+
 /// Free a buffer previously returned by `zs_binius_prove` (or any buffer the
 /// ABI handed back). The caller passes the same `HostAllocator` used for the
 /// call plus the returned pointer/length; the underlying host block (including

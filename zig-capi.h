@@ -62,6 +62,14 @@ int32_t zs_binius_verify(
     const uint8_t *domain_ptr, size_t domain_len,
     int *out_ok);
 
+/* Commit the witness columns and return the serialized roots
+ * (u64 count, then 32 bytes per column). */
+int32_t zs_binius_commit(
+    zs_host_allocator host,
+    uint8_t k,
+    const uint8_t *columns_ptr, size_t columns_len,
+    uint8_t **out_roots, size_t *out_len);
+
 /* Release a buffer returned by the ABI (use the same HostAllocator). */
 void zs_free(zs_host_allocator host, uint8_t *ptr, size_t len);
 

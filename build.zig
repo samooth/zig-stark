@@ -213,4 +213,30 @@ pub fn build(b: *std.Build) void {
     run_fuzz.addArg("2000");
     const fuzz_step = b.step("fuzz", "Run randomized gadget fuzz (prove/verify/tamper)");
     fuzz_step.dependOn(&run_fuzz.step);
+
+    // N-API native addon for Node.js.
+    const node_addon_step = b.step("node-addon", "Build the Node.js N-API addon (-Dnapi-include=<node include dir>)");
+    if (b.option([]const u8, "napi-include", "Path to the Node include dir containing node_api.h")) |inc| {
+        const capi_mod = b.addModule("capi", .{
+            .root_source_file = b.path("src/capi.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        const addon_mod = b.createModule(.{
+            .root_source_file = b.path("bindings/node/addon.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "capi", .module = capi_mod },
+            },
+        });
+        addon_mod.addIncludePath(.{ .cwd_relative = inc });
+        const addon = b.addLibrary(.{ .name = "addon", .linkage = .dynamic, .root_module = addon_mod });
+        addon.linker_allow_shlib_undefined = true; // N-API symbols resolve from Node at load
+        const install = b.addInstallArtifact(addon, .{ .dest_sub_path = "addon.node" });
+        node_addon_step.dependOn(&install.step);
+    } else {
+        node_addon_step.addError("{s}", .{"pass -Dnapi-include=<dir> (e.g. $HOME/.nvm/versions/node/vXX/include/node)"}) catch {};
+    }
 }
