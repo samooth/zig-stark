@@ -5,7 +5,7 @@ committed-MLE PCS (`BiniusStarkWith`): the O(2^k) `CommittedMlePcs`, the
 sub-linear `PackedPcs`, and the sub-linear polylog FRI-Binius PCS
 (`fripcs.zig`, FRI-fold in lockstep with the eval sum-check). Extension-field
 `(F, E)` soundness mode, boundary pins, and five gadgets (4-bit adder,
-bit-pack, range check, comparison, constraint DSL). 205 tests (196 unit + 9
+bit-pack, range check, comparison, constraint DSL). 215 tests (200 unit + 15
 end-to-end).
 
 ## 1. Sub-linear MLE evaluation / commitment (HIGH, DONE — polylog route landed)
@@ -115,7 +115,13 @@ stay individually bound. `BiniusStarkFri` uses it via `BatchFriPcsStark`;
 - `AdditiveFri` commits each layer with a fresh Merkle tree; consider packing
   multiple field elements per leaf and reusing the hasher.
 
-## 6. Proof serialization (LOW)
+## 6. Proof serialization (LOW, DONE)
 
-Prover/verifier exchange in-memory types; no canonical byte encoding for
-transport. Needed for real-world usage.
+`src/core/serialization.zig` provides a canonical little-endian wire encoding
+for every proof in both stacks: `serialize(allocator, value)` /
+`deserialize(allocator, bytes, T)` are comptime-polymorphic over the proof type
+(field elements as `SIZE` LE bytes, slices with `u64` length prefixes, `usize`
+as 8 bytes, optionals with a presence flag, allocator fields skipped). See
+`docs/wire.md`. E2e round-trips verify the deserialized proof for
+`CommittedMlePcs`, `BatchFriPcs`, both `BiniusArg` backends, and the M31
+Fibonacci STARK.

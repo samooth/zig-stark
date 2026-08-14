@@ -8,6 +8,25 @@ breaking changes.
 
 ### Added
 
+- `src/core/serialization.zig`: canonical little-endian proof wire encoding.
+  `serialize(allocator, value)` / `deserialize(allocator, bytes, T)` derive the
+  format from the compile-time type (no per-struct code): field elements as
+  `SIZE` LE bytes (the same convention every transcript absorbs), `[N]u8`
+  raw, slices with a `u64` LE length prefix, unsigned ints LE (`usize` is 8
+  bytes), optionals with a one-byte presence flag, structs in declaration
+  order. `std.mem.Allocator` fields never cross the wire (restored on read),
+  and `CommittedMlePcs.Proof.owns_entries` is forced true so deserialized
+  proofs own their `entries` copy. Covers every proof in both stacks (Binius
+  sum-check / PCS / arg / STARK in both eval shapes; M31 FRI / STARK), with
+  e2e round-trips proving `prove -> serialize -> deserialize -> verify` is
+  accepted for `CommittedMlePcs`, `BatchFriPcs`, both `BiniusArg` backends,
+  and the M31 Fibonacci STARK, plus a golden test pinning the byte layout.
+  `docs/wire.md` documents the format.
+- `src/binius/pcs.zig`: `CommittedMlePcs.Proof` gains `owns_entries: bool =
+  false`; `deinit` frees `entries` when set, so serialized proofs remain
+  leak-free.
+- e2e round-trip tests in `tests/e2e_tests.zig` for all proof shapes above.
+
 - `src/binius/batchpcs.zig`: batched eval PCS (M2). `BatchFriPcs(F, E,
   log_blowup, q)` shares one Merkle tree per FRI layer across all columns
   opened at the same point, so a single query path per round serves every

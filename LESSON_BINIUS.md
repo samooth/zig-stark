@@ -265,3 +265,36 @@ coefficient `f(r)/d`.
   increasing and bounded in `[0, 16)`" with `seq[0]`, `seq[n]` pinned as public
   boundary inputs. A forged witness violating either property (an out-of-range
   value at one point, or one swapped unordered pair) is rejected.
+
+## Proof serialization (comptime-polymorphic wire format)
+
+- A type-driven serializer in `src/core/serialization.zig` covers *every* proof
+  in both stacks with two functions: `serialize(allocator, value)` and
+  `deserialize(allocator, bytes, T)` dispatch on `@typeInfo(T)` — field
+  elements (`SIZE` + `toBytes`/`fromBytes`) as `SIZE` LE bytes, `[N]u8` raw,
+  slices with a `u64` length prefix, unsigned ints LE, optionals with a
+  presence byte, structs in declaration order. The field-element encoding
+  matches what every transcript already absorbs, so wire bytes == transcript
+  bytes by construction.
+- **The lazy-`if` trap.** `if (isField(T)) { uses T.SIZE } else { ... }` fails
+  for plain structs even when `isField` returns false at runtime, because the
+  compiler analyzes *both* branches of a non-comptime condition. Fix: `const
+  is_field = comptime isField(T);` forces dead-branch elimination.
+- **Zig 0.16 API landmines:** `std.ArrayList(T)` is unmanaged (`var l:
+  std.ArrayList(u8) = .empty`, `append(allocator, v)`, `toOwnedSlice(allocator)`);
+  `Pointer.Size` has a `.c` variant that an exhaustive switch must name;
+  `@hasDecl`/field-name tests inside `inline for` need `if (comptime
+  std.mem.eql(u8, f.name, ...))` (comptime control flow in a runtime block is
+  an error); anonymous structs can't name themselves in a method signature
+  (use `@This()`).
+- **Ownership must cross the wire explicitly.** `CommittedMlePcs.Proof.entries`
+  is *borrowed* when prover-produced, but a deserialized proof owns its copy.
+  Rather than hand-allocating per type, the serializer skips a bool
+  `owns_entries` field on the wire and forces it `true` on read, so the
+  existing `deinit` frees it — round-tripped proofs leak nothing. M31 proofs
+  embed `std.mem.Allocator`; the serializer skips those fields and restores
+  the caller's allocator, keeping the wire allocator-free.
+- The strongest round-trip test is `prove -> serialize -> deserialize ->
+  verify` (the verifier accepts the reconstructed proof), not field equality —
+  the M31 proof embeds an allocator and the Binius proof borrows tables, so
+  `std.meta.eql` would be wrong even though every field byte round-trips.

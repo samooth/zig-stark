@@ -9,7 +9,7 @@ Working end-to-end on both stacks:
 - **M31 DEEP-FRI STARK** — the prover and verifier in `src/m31/stark.zig` handle any AIR implementing the `GenericStark` interface, including optional preprocessed columns and **LogUp multiset lookups**, with three complete examples: a Fibonacci sequence, a Rescue permutation, and a single linear ML layer.
 - **Binius binary-field stack** — a zero-check STARK (`src/binius/stark.zig`) over the canonical Wiedemann tower of binary fields (`src/binius/tower.zig`), combining committed multilinear PCS openings via sum-check (`src/binius/sumcheck.zig`, `src/binius/pcs.zig`), with an additive FRI low-degree test (`src/binius/addfri.zig`), a standalone product-sum argument (`src/binius/arg.zig`, now `(F, E, PCS)`-parameterized like the STARK), and a gadget library built on bit-sliced encodings: a batched 4-bit ripple-carry adder (`src/binius/adder.zig`), a bit-pack gadget (`src/binius/bitpack.zig`), and new `RangeCheck` / `Compare` gadgets (`src/binius/rangecheck.zig`, `src/binius/compare.zig`) that prove a value fits in `2^m` and compare two bit-sliced values in constant-free field arithmetic — combinable in one proof through a small comptime constraint DSL (`src/binius/constraints.zig`), each demonstrated by an end-to-end example. The STARK is parameterized over field, extension field, and the committed-MLE PCS (`CommittedMlePcs` opens all 2^k entries; the `PackedPcs` mode in `src/binius/packed_pcs.zig` commits each witness column as a *packed* univariate polynomial via a column-Merkle tree, opening only the row combination and a handful of sampled columns for sub-linear proofs). The **polylog FRI-Binius PCS** (`src/binius/fripcs.zig`, wired in as `BiniusStarkFri` / `BiniusArgFri`) FRI-folds the additive-NTT code in lockstep with the eval sum-check for O(polylog) proof size, and `BiniusStarkFri` additionally batches all distinct column openings into one proof with shared per-layer Merkle trees (`src/binius/batchpcs.zig`). It supports boundary pins (public column-point evaluations folded into the zero-check, like M31 boundary assertions), and all randomness flows through a single unified Fiat-Shamir channel (`src/core/channel/channel.zig`) that also binds public inputs. The protocol can run over a large extension field `E` (e.g. `tower.Gf2_128`) of a small witness field `F`, keeping ≈ 2^-128 Schwartz-Zippel soundness for script-friendly GF(16)/GF(256) witnesses at the price of `E`-field arithmetic.
 
-205 tests pass (196 unit + 9 end-to-end) with no leaks.
+215 tests pass (200 unit + 15 end-to-end) with no leaks.
 
 ## Documentation
 
@@ -17,12 +17,13 @@ Working end-to-end on both stacks:
 - [`docs/protocol.md`](docs/protocol.md) — the full DEEP-FRI protocol: composition, quotient, DEEP combination, FRI, and the exact transcript order
 - [`docs/examples.md`](docs/examples.md) — how the Fibonacci and linear-ML examples work, and how to write a new AIR
 - [`docs/binius.md`](docs/binius.md) — the binary-field stack's soundness: transcript order, every Schwartz-Zippel error term, concrete `(Gf256, Gf2_128)` security, the FRI final-check and packing identities
+- [`docs/wire.md`](docs/wire.md) — the canonical little-endian proof wire format (`src/core/serialization.zig`), used by every proof in both stacks
 
 ## Project structure
 
 ```
 src/
-  core/         Field-agnostic primitives: hash (Blake3), merkle, channel, simd
+  core/         Field-agnostic primitives: hash (Blake3), merkle, channel, serialization, simd
   m31/          M31 STARK stack: field tower, circle, ntt, air, poly, fri, stark
     field/      M31, CM31, QM31 field arithmetic + SIMD helpers
     circle/     Circle point group, domains, cosets
