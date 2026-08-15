@@ -249,6 +249,8 @@ pub fn build(b: *std.Build) void {
     cuda_kernels_step.dependOn(&nvcc_vec.step);
     const nvcc_sumcheck = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/sumcheck.ptx", "src/cuda/kernels/sumcheck.cu" });
     cuda_kernels_step.dependOn(&nvcc_sumcheck.step);
+    const nvcc_circlefft = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/circlefft.ptx", "src/cuda/kernels/circlefft.cu" });
+    cuda_kernels_step.dependOn(&nvcc_circlefft.step);
 
     const cuda_hello_step = b.step("cuda-hello", "Build+run the CUDA hello kernel (requires GPU + driver)");
     const hello_mod = b.createModule(.{
@@ -294,4 +296,20 @@ pub fn build(b: *std.Build) void {
     const sumcheck_exe = b.addExecutable(.{ .name = "cuda_sumcheck", .root_module = sumcheck_mod });
     const run_sumcheck = b.addRunArtifact(sumcheck_exe);
     cuda_sumcheck_step.dependOn(&run_sumcheck.step);
+
+    // E2: M31 circle FFT bit-exactness vs ntt/circle.zig.
+    const cuda_circlefft_step = b.step("cuda-circlefft", "Build+run the M31 circle FFT GPU test (requires GPU + driver)");
+    const circlefft_mod = b.createModule(.{
+        .root_source_file = b.path("src/cuda/circlefft_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "zig-stark", .module = lib },
+        },
+    });
+    circlefft_mod.linkSystemLibrary("cuda", .{});
+    const circlefft_exe = b.addExecutable(.{ .name = "cuda_circlefft", .root_module = circlefft_mod });
+    const run_circlefft = b.addRunArtifact(circlefft_exe);
+    cuda_circlefft_step.dependOn(&run_circlefft.step);
 }

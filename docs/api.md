@@ -268,6 +268,14 @@ fall back to CPU.
   per-round `values[t]` bit-exact with CPU, full `BiniusStark(Gf256,Gf256)`
   and `BiniusStark(Gf16,Gf2_128)` proofs byte-identical to the CPU ones, plus
   a benchmark.
+- `zig build cuda-circlefft` — M31 circle FFT on the GPU: forward + inverse
+  bit-exact with `ntt/circle.zig` for n = 8..65536 (`canonicHalf` sizes), plus
+  a CPU-vs-GPU timing at the largest size. `src/cuda/circlefft_gpu.zig` builds
+  the twiddle tree with the library's own `precomputeTwiddles`/`circleTwiddles`
+  (now exported from `ntt_circle`) so every twiddle matches the CPU exactly and
+  only the per-layer butterfly, bit-reversal and (de)interleave kernels
+  (`src/cuda/kernels/circlefft.cu`) run on the GPU. Sizes below lg = 3 and
+  missing GPUs fall back to the CPU transform.
 - `zig build cuda-kernels` — regenerate `src/cuda/kernels/*.ptx` with `nvcc`
   (the committed PTX keeps the default build free of the CUDA toolkit).
 
@@ -278,5 +286,6 @@ registers the `gf256_values`/`gf128_values` evaluators; `accel.mode`
 (`GpuMode` `auto`/`on`/`off`, default `auto`) controls whether the prover may
 use them — `auto` falls back to CPU when no hook is registered, `on` errors
 with `error.GpuUnavailable`, `off` never touches the GPU. This is E1 of the
-GPU roadmap (Gf256 then Gf2_128 bit-sliced field mul); E2 is the M31 circle
-FFT.
+GPU roadmap (Gf256 then Gf2_128 bit-sliced field mul). E2 (landed) is the M31
+circle FFT via `src/cuda/circlefft_gpu.zig`; E3 will be Merkle (Blake3)
+hashing.

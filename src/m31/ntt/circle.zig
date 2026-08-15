@@ -58,6 +58,14 @@ fn fftLayerLoop(values: []M31, i: usize, h: usize, t: M31, inverse: bool) void {
 /// 2^half_coset.log_size). Each level k collects the bit-reversed x-values of
 /// the first 2^(k-1) points of the current (doubling) coset; the last slot is
 /// an arbitrary padding value.
+///
+/// Exported so the CUDA host path (`src/cuda/circlefft_gpu.zig`) can build the
+/// exact same twiddles the CPU transform uses and only run the butterfly
+/// layers on the GPU.
+pub fn precomputeTwiddles(half_coset: CircleCoset, out: []M31) void {
+    slowPrecomputeTwiddles(half_coset, out);
+}
+
 fn slowPrecomputeTwiddles(half_coset: CircleCoset, out: []M31) void {
     var pos: usize = 0;
     var cur = half_coset;
@@ -74,7 +82,8 @@ fn slowPrecomputeTwiddles(half_coset: CircleCoset, out: []M31) void {
 }
 
 /// The `j`-th line-twiddle layer (0 = largest) as a slice of the twiddle tree.
-fn lineTwiddleSlice(twiddles: []const M31, j: usize, lg: u32) []const M31 {
+/// Exported for the CUDA host path (see `precomputeTwiddles`).
+pub fn lineTwiddleSlice(twiddles: []const M31, j: usize, lg: u32) []const M31 {
     const i_level = lg - 2 - @as(u32, @intCast(j));
     const len: usize = @as(usize, 1) << @intCast(i_level);
     const blen = twiddles.len;
@@ -83,8 +92,8 @@ fn lineTwiddleSlice(twiddles: []const M31, j: usize, lg: u32) []const M31 {
 
 /// Compute the circle-layer twiddles (layer 0) from the first line twiddle
 /// layer: each pair (x, y) expands to [y, -y, -x, x]. `out` has length
-/// 2 * first.len.
-fn circleTwiddles(first: []const M31, out: []M31) void {
+/// 2 * first.len. Exported for the CUDA host path (see `precomputeTwiddles`).
+pub fn circleTwiddles(first: []const M31, out: []M31) void {
     std.debug.assert(out.len == 2 * first.len);
     for (0..first.len / 2) |i| {
         const x = first[2 * i];

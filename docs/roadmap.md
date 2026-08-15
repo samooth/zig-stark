@@ -37,8 +37,15 @@ details live in `docs/binius.md`, `docs/protocol.md`, and `docs/wire.md`.
   (`src/binius/accel.zig`, `GpuMode` auto/on/off; `zig build cuda-gf` +
   `zig build cuda-sumcheck` validate bit-exactness and byte-identical Stark
   proofs). Gf2_128 wins on the GPU for k>=5 (Gf256 for k>=8); per-round
-  overhead dominates for small k. Next: E2 — the M31 circle FFT / classic NTT;
-  E3 — Merkle (Blake3) hashing.
+  overhead dominates for small k. E2 landed: the M31 circle FFT
+  (`src/cuda/circlefft_gpu.zig`) runs forward/inverse transforms bit-exact with
+  `ntt/circle.zig` — the twiddle tree is built with the library's own
+  `precomputeTwiddles` and only the butterfly/bit-reversal/(de)interleave layers
+  run on the GPU; sizes below lg=3 and missing GPUs fall back to the CPU
+  (`zig build cuda-circlefft`, kernels in `src/cuda/kernels/circlefft.cu`).
+  Current speedups are modest (1.1-1.3x, kernel-launch bound); the win will
+  come from fusing the per-layer launches once NTTE-style batched rotations
+  land. Next: E3 — Merkle (Blake3) hashing.
 - **Smaller batch openings.** The remaining proof-size gap is the batch-proof
   internals: batched FRI queries (combine `q` queries into one response
   polynomial per layer), a Brakedown-style batched eval sum-check, and

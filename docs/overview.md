@@ -110,6 +110,7 @@ zig build node-addon -Dnapi-include=<node/include/dir> # Node.js N-API addon
 zig build cuda-hello # CUDA validation kernel (GPU + driver); cuda-kernels regenerates the PTX
 zig build cuda-gf     # Gf256 field-mul kernel: bit-exactness vs the CPU tower
 zig build cuda-sumcheck # Gf256/Gf2_128 sum-check rounds on the GPU (bit-exact + Stark proof compare)
+zig build cuda-circlefft # M31 circle FFT on the GPU (bit-exact fwd+inv vs ntt/circle.zig)
 zig test src/root.zig # equivalent unit-test entry point
 ```
 
