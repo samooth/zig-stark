@@ -262,7 +262,21 @@ fall back to CPU.
 - `zig build cuda-hello` — build + run the `vecAdd` validation kernel
   (requires a GPU + driver; on the RTX 3080 it processes 1M u32 in ~3 ms
   including transfers).
+- `zig build cuda-gf` — Gf256 field-mul kernel: bit-exactness vs the CPU
+  tower over 2^20 samples.
+- `zig build cuda-sumcheck` — Gf256 and Gf2_128 sum-check rounds on the GPU:
+  per-round `values[t]` bit-exact with CPU, full `BiniusStark(Gf256,Gf256)`
+  and `BiniusStark(Gf16,Gf2_128)` proofs byte-identical to the CPU ones, plus
+  a benchmark.
 - `zig build cuda-kernels` — regenerate `src/cuda/kernels/*.ptx` with `nvcc`
   (the committed PTX keeps the default build free of the CUDA toolkit).
-- Roadmap (E1): GPU the Binius zero-check sum-check round evaluation (Gf256
-  first, then Gf2_128 via bit-sliced field mul), then the M31 circle FFT.
+
+The library itself stays CUDA-free: the Binius sum-check reads a pluggable
+accelerator hook, `src/binius/accel.zig` (exported from `binius.accel`). A
+CUDA-enabled host calls `src/cuda/sumcheck_gpu.zig`'s `enable()`, which
+registers the `gf256_values`/`gf128_values` evaluators; `accel.mode`
+(`GpuMode` `auto`/`on`/`off`, default `auto`) controls whether the prover may
+use them — `auto` falls back to CPU when no hook is registered, `on` errors
+with `error.GpuUnavailable`, `off` never touches the GPU. This is E1 of the
+GPU roadmap (Gf256 then Gf2_128 bit-sliced field mul); E2 is the M31 circle
+FFT.

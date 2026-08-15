@@ -63,6 +63,7 @@ src/
     tower.zig   Canonical Wiedemann tower: Gf2 .. Gf2_128
     field.zig   BinaryField GF(2^k) arithmetic
     sumcheck.zig    Sum-check over binary fields
+    accel.zig   CUDA-free GPU hook (GpuMode auto/on/off + gf256/gf2_128 evaluators)
     polynomial.zig  Multilinear polynomials, univariate interpolation
     pack.zig    Packed-MLE interpolation / novel-basis evaluation (novelEval)
     pcs.zig     Merkle-bound committed multilinear PCS (O(2^k) openings)
@@ -107,6 +108,8 @@ zig build wasm       # C ABI as a wasm32 module (bindings/js)
 zig build fuzz       # randomized gadget fuzz (prove/verify/tamper)
 zig build node-addon -Dnapi-include=<node/include/dir> # Node.js N-API addon
 zig build cuda-hello # CUDA validation kernel (GPU + driver); cuda-kernels regenerates the PTX
+zig build cuda-gf     # Gf256 field-mul kernel: bit-exactness vs the CPU tower
+zig build cuda-sumcheck # Gf256/Gf2_128 sum-check rounds on the GPU (bit-exact + Stark proof compare)
 zig test src/root.zig # equivalent unit-test entry point
 ```
 
