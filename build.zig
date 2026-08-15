@@ -245,8 +245,10 @@ pub fn build(b: *std.Build) void {
     // load. `cuda-hello` builds + runs the vecAdd validation kernel (requires a
     // GPU + CUDA driver); `cuda-kernels` regenerates the PTX with nvcc.
     const cuda_kernels_step = b.step("cuda-kernels", "Regenerate src/cuda/kernels/*.ptx with nvcc (requires nvcc)");
-    const nvcc = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/vecAdd.ptx", "src/cuda/kernels/vecAdd.cu" });
-    cuda_kernels_step.dependOn(&nvcc.step);
+    const nvcc_vec = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/vecAdd.ptx", "src/cuda/kernels/vecAdd.cu" });
+    cuda_kernels_step.dependOn(&nvcc_vec.step);
+    const nvcc_sumcheck = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/sumcheck.ptx", "src/cuda/kernels/sumcheck.cu" });
+    cuda_kernels_step.dependOn(&nvcc_sumcheck.step);
 
     const cuda_hello_step = b.step("cuda-hello", "Build+run the CUDA hello kernel (requires GPU + driver)");
     const hello_mod = b.createModule(.{
@@ -275,4 +277,21 @@ pub fn build(b: *std.Build) void {
     const gf_exe = b.addExecutable(.{ .name = "cuda_gf", .root_module = gf_mod });
     const run_gf = b.addRunArtifact(gf_exe);
     cuda_gf_step.dependOn(&run_gf.step);
+
+    // E1b: Gf256 sum-check `values[t]` bit-exactness + full prove via the GPU
+    // accelerator hook (`src/binius/accel.zig`).
+    const cuda_sumcheck_step = b.step("cuda-sumcheck", "Build+run the Gf256 sum-check GPU test (requires GPU + driver)");
+    const sumcheck_mod = b.createModule(.{
+        .root_source_file = b.path("src/cuda/sumcheck_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "zig-stark", .module = lib },
+        },
+    });
+    sumcheck_mod.linkSystemLibrary("cuda", .{});
+    const sumcheck_exe = b.addExecutable(.{ .name = "cuda_sumcheck", .root_module = sumcheck_mod });
+    const run_sumcheck = b.addRunArtifact(sumcheck_exe);
+    cuda_sumcheck_step.dependOn(&run_sumcheck.step);
 }

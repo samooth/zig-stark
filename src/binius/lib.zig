@@ -17,6 +17,7 @@ pub const packed_pcs = @import("packed_pcs.zig");
 pub const batchpcs = @import("batchpcs.zig");
 pub const addfri = @import("addfri.zig");
 pub const fripcs = @import("fripcs.zig");
+pub const accel = @import("accel.zig");
 
 test {
     std.testing.refAllDecls(@This());

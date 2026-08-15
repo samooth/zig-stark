@@ -1,6 +1,8 @@
 const std = @import("std");
 const Polynomial = @import("polynomial.zig");
 const Pool = @import("../core/pool.zig").Pool;
+const Accel = @import("accel.zig");
+const Tower = @import("tower.zig");
 
 /// Sum-check protocol over a binary field `F` for the claim
 ///
@@ -269,7 +271,20 @@ pub fn Sumcheck(comptime F: type) type {
                 defer allocator.free(values);
                 for (0..dmax + 1) |t| points[t] = F.fromInt(t);
 
-                if (pool) |p| {
+                var values_filled = false;
+                if (comptime F == Tower.Gf256) {
+                    if (Accel.gf256_values) |hook| {
+                        if (try gpuRoundValues(allocator, hook, cur, len, terms, dmax, half)) |gv| {
+                            @memcpy(values, gv);
+                            allocator.free(gv);
+                            values_filled = true;
+                        }
+                    }
+                }
+
+                if (values_filled) {
+                    // values already computed on the accelerator.
+                } else if (pool) |p| {
                     // Parallel: each worker accumulates the contribution of its
                     // slice of `rest` positions into a private partial[t] array,
                     // reduced afterwards.
@@ -358,6 +373,54 @@ pub fn Sumcheck(comptime F: type) type {
             }
 
             return .{ .claimed_sum = h, .rounds = rounds };
+        }
+
+        /// Compute one round's `values[t]` on the accelerator (Gf256). Builds
+        /// the flattened byte inputs, calls the registered hook, and converts
+        /// its byte output back to `F`. Returns `null` when the accelerator
+        /// chose not to handle the round (CPU fallback).
+        fn gpuRoundValues(
+            allocator: std.mem.Allocator,
+            hook: Accel.Gf256ValuesFn,
+            cur: []const []const F,
+            len: usize,
+            terms: []const Term,
+            dmax: usize,
+            half: usize,
+        ) anyerror!?[]F {
+            const m = cur.len;
+            const cur_flat = try allocator.alloc(u8, m * len);
+            defer allocator.free(cur_flat);
+            for (0..m) |j| {
+                for (0..len) |i| cur_flat[j * len + i] = @truncate(cur[j][i].value);
+            }
+            const coeffs = try allocator.alloc(u8, terms.len);
+            defer allocator.free(coeffs);
+            var total: usize = 0;
+            for (terms) |tm| total += tm.indices.len;
+            const indices = try allocator.alloc(u32, total);
+            defer allocator.free(indices);
+            const offsets = try allocator.alloc(u32, terms.len + 1);
+            defer allocator.free(offsets);
+            var o: usize = 0;
+            for (terms, 0..) |tm, ti| {
+                coeffs[ti] = @truncate(tm.coeff.value);
+                offsets[ti] = @intCast(o);
+                for (tm.indices) |idx| {
+                    indices[o] = @intCast(idx);
+                    o += 1;
+                }
+            }
+            offsets[terms.len] = @intCast(o);
+
+            const bytes = try hook(allocator, cur_flat, len, m, coeffs, indices, offsets, dmax, half);
+            if (bytes) |bv| {
+                const out = try allocator.alloc(F, dmax + 1);
+                for (0..dmax + 1) |t| out[t] = F.fromInt(bv[t]);
+                allocator.free(bv);
+                return out;
+            }
+            return null;
         }
 
         /// Off-chain prover. `tables` has m tables of length 2^k.
