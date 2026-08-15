@@ -259,4 +259,20 @@ pub fn build(b: *std.Build) void {
     const hello_exe = b.addExecutable(.{ .name = "cuda_hello", .root_module = hello_mod });
     const run_hello = b.addRunArtifact(hello_exe);
     cuda_hello_step.dependOn(&run_hello.step);
+
+    // E1a: Gf256 tower multiplication bit-exactness vs tower.zig.
+    const cuda_gf_step = b.step("cuda-gf", "Build+run the Gf256 mul bit-exactness test (requires GPU + driver)");
+    const gf_mod = b.createModule(.{
+        .root_source_file = b.path("src/cuda/gf_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "zig-stark", .module = lib },
+        },
+    });
+    gf_mod.linkSystemLibrary("cuda", .{});
+    const gf_exe = b.addExecutable(.{ .name = "cuda_gf", .root_module = gf_mod });
+    const run_gf = b.addRunArtifact(gf_exe);
+    cuda_gf_step.dependOn(&run_gf.step);
 }
