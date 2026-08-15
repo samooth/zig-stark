@@ -273,12 +273,25 @@ pub fn Sumcheck(comptime F: type) type {
 
                 var values_filled = false;
                 if (comptime F == Tower.Gf256) {
-                    if (Accel.gf256_values) |hook| {
-                        if (try gpuRoundValues(allocator, hook, cur, len, terms, dmax, half)) |gv| {
-                            @memcpy(values, gv);
-                            allocator.free(gv);
-                            values_filled = true;
-                        }
+                    switch (Accel.mode) {
+                        .off => {},
+                        .on => {
+                            const hook = Accel.gf256_values orelse return error.GpuUnavailable;
+                            if (try gpuRoundValues(allocator, hook, cur, len, terms, dmax, half)) |gv| {
+                                @memcpy(values, gv);
+                                allocator.free(gv);
+                                values_filled = true;
+                            }
+                        },
+                        .auto => {
+                            if (Accel.gf256_values) |hook| {
+                                if (try gpuRoundValues(allocator, hook, cur, len, terms, dmax, half)) |gv| {
+                                    @memcpy(values, gv);
+                                    allocator.free(gv);
+                                    values_filled = true;
+                                }
+                            }
+                        },
                     }
                 }
 
@@ -678,4 +691,84 @@ test "challenges span the full GF(256) field" {
         }
     }
     try std.testing.expect(count > 16);
+}
+
+fn fakeGpuHook(
+    allocator: std.mem.Allocator,
+    cur_flat: []const u8,
+    len: usize,
+    m: usize,
+    coeffs: []const u8,
+    indices: []const u32,
+    offsets: []const u32,
+    dmax: usize,
+    half: usize,
+) anyerror!?[]u8 {
+    _ = cur_flat;
+    _ = len;
+    _ = m;
+    _ = coeffs;
+    _ = indices;
+    _ = offsets;
+    _ = half;
+    const out = try allocator.alloc(u8, dmax + 1);
+    @memset(out, 0);
+    return out;
+}
+
+/// CPU evaluation of g(x) = 2·t0(x)·t1(x) + 3·t0(x) at the challenge point —
+/// the value a correct combination proof must end with.
+fn g256CombinationEval(
+    allocator: std.mem.Allocator,
+    ch: []const Tower.Gf256,
+    t0: []const Tower.Gf256,
+    t1: []const Tower.Gf256,
+) !Tower.Gf256 {
+    const G = Tower.Gf256;
+    const Multilinear = @import("polynomial.zig").Multilinear(G);
+    const v0 = try (Multilinear{ .evals = t0 }).eval(allocator, ch);
+    const v1 = try (Multilinear{ .evals = t1 }).eval(allocator, ch);
+    return G.fromInt(2).mul(v0.mul(v1)).add(G.fromInt(3).mul(v0));
+}
+
+test "GpuMode off/auto/on control the accelerator hook" {
+    const alloc = std.testing.allocator;
+    const G = Tower.Gf256;
+    const T256 = Sumcheck(G);
+    const t0 = [_]G{ G.fromInt(1), G.fromInt(2), G.fromInt(3), G.fromInt(4) };
+    const t1 = [_]G{ G.fromInt(5), G.fromInt(6), G.fromInt(7), G.fromInt(8) };
+    const tables = [_][]const G{ &t0, &t1 };
+    const terms = [_]T256.Term{
+        .{ .coeff = G.fromInt(2), .indices = &.{ 0, 1 } },
+        .{ .coeff = G.fromInt(3), .indices = &.{0} },
+    };
+
+    const saved_hook = Accel.gf256_values;
+    const saved_mode = Accel.mode;
+    defer {
+        Accel.gf256_values = saved_hook;
+        Accel.mode = saved_mode;
+    }
+
+    // `.off`: the registered (garbage) hook is ignored; the proof is correct.
+    Accel.mode = .off;
+    Accel.gf256_values = fakeGpuHook;
+    var sp = try T256.proveCombination(alloc, 2, &tables, &terms, null);
+    defer sp.deinit(alloc);
+    const rr = (try T256.runRounds(alloc, null, sp.claimed_sum, sp.rounds)) orelse return error.TestUnexpectedResult;
+    defer alloc.free(rr.challenges);
+    try std.testing.expect((try g256CombinationEval(alloc, rr.challenges, &t0, &t1)).eq(rr.current_sum));
+
+    // `.auto` with the garbage hook: the hook is used, so the proof is wrong.
+    Accel.mode = .auto;
+    var sp2 = try T256.proveCombination(alloc, 2, &tables, &terms, null);
+    defer sp2.deinit(alloc);
+    const rr2 = (try T256.runRounds(alloc, null, sp2.claimed_sum, sp2.rounds)) orelse return;
+    defer alloc.free(rr2.challenges);
+    try std.testing.expect(!(try g256CombinationEval(alloc, rr2.challenges, &t0, &t1)).eq(rr2.current_sum));
+
+    // `.on` with no hook: hard error.
+    Accel.mode = .on;
+    Accel.gf256_values = null;
+    try std.testing.expectError(error.GpuUnavailable, T256.proveCombination(alloc, 2, &tables, &terms, null));
 }

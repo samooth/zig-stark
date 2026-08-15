@@ -25,5 +25,18 @@ pub const Gf256ValuesFn = *const fn (
     half: usize,
 ) anyerror!?[]u8;
 
+/// How the prover may use a registered accelerator (GPU) hook.
+///
+///   - `.auto` (default): use the GPU when `gf256_values` is registered by a
+///     CUDA-enabled process, otherwise fall back to the CPU. Safe for plain
+///     builds — the library itself never depends on CUDA.
+///   - `.on`:  require the GPU. When no hook is registered,
+///     `prove`/`proveParallel` return `error.GpuUnavailable`.
+///   - `.off`: never use the accelerator; always take the CPU path.
+pub const GpuMode = enum { auto, on, off };
+
 /// Registered GPU `values[t]` evaluator for Gf256, or `null` for CPU.
 pub var gf256_values: ?Gf256ValuesFn = null;
+
+/// How `gf256_values` may be used by the prover (see `GpuMode`).
+pub var mode: GpuMode = .auto;
