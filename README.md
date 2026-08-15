@@ -84,6 +84,8 @@ zig build wasm       # build the C ABI as a wasm32 module (bindings/js)
 zig build fuzz       # randomized gadget fuzz (prove/verify/tamper)
 zig build node-addon -Dnapi-include=<node/include/dir> # Node.js N-API addon (bindings/node)
 zig build cuda-hello # CUDA validation kernel (requires GPU + driver); kernels: zig build cuda-kernels
+zig build cuda-gf     # Gf256 field-mul kernel: bit-exactness vs the CPU tower
+zig build cuda-sumcheck # Gf256 sum-check round on the GPU: bit-exact + full Stark proof compare
 ```
 
 Run the examples:

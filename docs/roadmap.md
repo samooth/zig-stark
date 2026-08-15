@@ -31,9 +31,13 @@ details live in `docs/binius.md`, `docs/protocol.md`, and `docs/wire.md`.
   prover. E0a (toolchain) landed: Zig 0.16 cannot emit nvptx kernels (the LLVM
   backend errors and there is no self-hosted backend), so kernels are CUDA C
   compiled to PTX and loaded via the CUDA Driver API from `src/cuda/` (opt-in,
-  CPU fallback when no GPU/driver). Next: E1 — GPU the Binius zero-check
-  sum-check round evaluation (Gf256 first, then Gf2_128 via bit-sliced field
-  mul); E2 — the M31 circle FFT / classic NTT; E3 — Merkle (Blake3) hashing.
+  CPU fallback when no GPU/driver). E1 landed: the Binius zero-check sum-check
+  round for Gf256 runs on the GPU via a CUDA-free accelerator hook
+  (`src/binius/accel.zig`, `GpuMode` auto/on/off; `zig build cuda-gf` +
+  `zig build cuda-sumcheck` validate bit-exactness and a byte-identical Stark
+  proof). Next: E1 — Gf2_128 via bit-sliced field mul (GPU wins for k>=8
+  today; per-round overhead dominates for small k); E2 — the M31 circle FFT /
+  classic NTT; E3 — Merkle (Blake3) hashing.
 - **Smaller batch openings.** The remaining proof-size gap is the batch-proof
   internals: batched FRI queries (combine `q` queries into one response
   polynomial per layer), a Brakedown-style batched eval sum-check, and
