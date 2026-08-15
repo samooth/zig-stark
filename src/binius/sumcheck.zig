@@ -272,20 +272,22 @@ pub fn Sumcheck(comptime F: type) type {
                 for (0..dmax + 1) |t| points[t] = F.fromInt(t);
 
                 var values_filled = false;
-                if (comptime F == Tower.Gf256) {
+                if (comptime F == Tower.Gf256 or F == Tower.Gf2_128) {
                     switch (Accel.mode) {
                         .off => {},
                         .on => {
-                            const hook = Accel.gf256_values orelse return error.GpuUnavailable;
-                            if (try gpuRoundValues(allocator, hook, cur, len, terms, dmax, half)) |gv| {
+                            const hook = if (comptime F == Tower.Gf256) Accel.gf256_values else Accel.gf128_values;
+                            const hfn = hook orelse return error.GpuUnavailable;
+                            if (try gpuRoundValues(allocator, hfn, cur, len, terms, dmax, half)) |gv| {
                                 @memcpy(values, gv);
                                 allocator.free(gv);
                                 values_filled = true;
                             }
                         },
                         .auto => {
-                            if (Accel.gf256_values) |hook| {
-                                if (try gpuRoundValues(allocator, hook, cur, len, terms, dmax, half)) |gv| {
+                            const hook = if (comptime F == Tower.Gf256) Accel.gf256_values else Accel.gf128_values;
+                            if (hook) |hfn| {
+                                if (try gpuRoundValues(allocator, hfn, cur, len, terms, dmax, half)) |gv| {
                                     @memcpy(values, gv);
                                     allocator.free(gv);
                                     values_filled = true;
@@ -401,13 +403,27 @@ pub fn Sumcheck(comptime F: type) type {
             dmax: usize,
             half: usize,
         ) anyerror!?[]F {
+            const bytes_per_value: usize = comptime if (F == Tower.Gf256)
+                1
+            else if (F == Tower.Gf2_128)
+                16
+            else
+                unreachable;
             const m = cur.len;
-            const cur_flat = try allocator.alloc(u8, m * len);
+            const cur_flat = try allocator.alloc(u8, m * len * bytes_per_value);
             defer allocator.free(cur_flat);
             for (0..m) |j| {
-                for (0..len) |i| cur_flat[j * len + i] = @truncate(cur[j][i].value);
+                for (0..len) |i| {
+                    const off = (j * len + i) * bytes_per_value;
+                    const v = cur[j][i].value;
+                    if (bytes_per_value == 1) {
+                        cur_flat[off] = @truncate(v);
+                    } else {
+                        std.mem.writeInt(u128, cur_flat[off..][0..16], v, .little);
+                    }
+                }
             }
-            const coeffs = try allocator.alloc(u8, terms.len);
+            const coeffs = try allocator.alloc(u8, terms.len * bytes_per_value);
             defer allocator.free(coeffs);
             var total: usize = 0;
             for (terms) |tm| total += tm.indices.len;
@@ -417,7 +433,11 @@ pub fn Sumcheck(comptime F: type) type {
             defer allocator.free(offsets);
             var o: usize = 0;
             for (terms, 0..) |tm, ti| {
-                coeffs[ti] = @truncate(tm.coeff.value);
+                if (bytes_per_value == 1) {
+                    coeffs[ti] = @truncate(tm.coeff.value);
+                } else {
+                    std.mem.writeInt(u128, coeffs[ti * 16 ..][0..16], tm.coeff.value, .little);
+                }
                 offsets[ti] = @intCast(o);
                 for (tm.indices) |idx| {
                     indices[o] = @intCast(idx);
@@ -429,7 +449,13 @@ pub fn Sumcheck(comptime F: type) type {
             const bytes = try hook(allocator, cur_flat, len, m, coeffs, indices, offsets, dmax, half);
             if (bytes) |bv| {
                 const out = try allocator.alloc(F, dmax + 1);
-                for (0..dmax + 1) |t| out[t] = F.fromInt(bv[t]);
+                for (0..dmax + 1) |t| {
+                    const v: u128 = if (bytes_per_value == 1)
+                        bv[t]
+                    else
+                        std.mem.readInt(u128, bv[t * 16 ..][0..16], .little);
+                    out[t] = F.fromInt(v);
+                }
                 allocator.free(bv);
                 return out;
             }

@@ -38,5 +38,13 @@ pub const GpuMode = enum { auto, on, off };
 /// Registered GPU `values[t]` evaluator for Gf256, or `null` for CPU.
 pub var gf256_values: ?Gf256ValuesFn = null;
 
-/// How `gf256_values` may be used by the prover (see `GpuMode`).
+/// Same wire shape as `Gf256ValuesFn`, but for `E = Gf2_128`: `cur_flat` is
+/// `m·len·16` bytes (each field element is a little-endian u128), `coeffs` is
+/// `nterms·16` bytes, and the result is `(dmax + 1)·16` bytes.
+pub const Gf128ValuesFn = Gf256ValuesFn;
+
+/// Registered GPU `values[t]` evaluator for Gf2_128, or `null` for CPU.
+pub var gf128_values: ?Gf128ValuesFn = null;
+
+/// How `gf256_values`/`gf128_values` may be used by the prover (see `GpuMode`).
 pub var mode: GpuMode = .auto;

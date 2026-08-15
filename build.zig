@@ -280,7 +280,7 @@ pub fn build(b: *std.Build) void {
 
     // E1b: Gf256 sum-check `values[t]` bit-exactness + full prove via the GPU
     // accelerator hook (`src/binius/accel.zig`).
-    const cuda_sumcheck_step = b.step("cuda-sumcheck", "Build+run the Gf256 sum-check GPU test (requires GPU + driver)");
+    const cuda_sumcheck_step = b.step("cuda-sumcheck", "Build+run the Gf256/Gf2_128 sum-check GPU tests (requires GPU + driver)");
     const sumcheck_mod = b.createModule(.{
         .root_source_file = b.path("src/cuda/sumcheck_test.zig"),
         .target = target,
