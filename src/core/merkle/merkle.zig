@@ -1,6 +1,31 @@
 const std = @import("std");
 const Hash = @import("../hash/hash.zig").Hash;
 
+/// How `MerkleTree.init` may use a registered accelerator (GPU) hook.
+///
+///   - `.auto` (default): use the GPU when `merkle_commit` is registered by a
+///     CUDA-enabled process, otherwise fall back to the CPU. Safe for plain
+///     builds — the library itself never depends on CUDA.
+///   - `.on`:  require the GPU. When no hook is registered, `init` returns
+///     `error.GpuUnavailable`.
+///   - `.off`: never use the accelerator; always take the CPU path.
+pub const GpuMode = enum { auto, on, off };
+
+/// Signature of a batch tree-builder. Given the (already hashed) leaves it
+/// returns a fully built `MerkleTree` (same layout as the CPU `init`: every
+/// level array allocated with `allocator`, level 0 an owned copy of `leaves`)
+/// or `null` to fall back to the CPU path.
+pub const MerkleCommitFn = *const fn (
+    allocator: std.mem.Allocator,
+    leaves: []const Hash.Digest,
+) anyerror!?MerkleTree;
+
+/// Registered GPU Merkle tree builder, or `null` for the CPU path.
+pub var merkle_commit: ?MerkleCommitFn = null;
+
+/// How `merkle_commit` may be used by `MerkleTree.init` (see `GpuMode`).
+pub var mode: GpuMode = .auto;
+
 /// Binary Merkle tree over a power-of-two number of leaves.
 /// Leaves are `Hash.Digest` values (produced by the caller, typically from
 /// field-element hashing); internal nodes are `hash2(left, right)`.
@@ -18,6 +43,24 @@ pub const MerkleTree = struct {
         const n = leaves.len;
         std.debug.assert(n > 0 and (n & (n - 1)) == 0); // power of two
 
+        switch (mode) {
+            .off => {},
+            .on => {
+                const f = merkle_commit orelse return error.GpuUnavailable;
+                return (try f(allocator, leaves)) orelse error.GpuUnavailable;
+            },
+            .auto => {
+                if (merkle_commit) |f| {
+                    if (try f(allocator, leaves)) |tree| return tree;
+                }
+            },
+        }
+
+        return buildCpu(allocator, leaves);
+    }
+
+    fn buildCpu(allocator: std.mem.Allocator, leaves: []const Hash.Digest) !MerkleTree {
+        const n = leaves.len;
         const depth: usize = @intCast(std.math.log2_int(usize, n)); // 0 for n = 1
         const num_levels = depth + 1;
 
@@ -154,4 +197,46 @@ test "merkle single leaf" {
     defer alloc.free(path);
     try std.testing.expectEqual(@as(usize, 0), path.len);
     try std.testing.expect(verify(tree.root(), 0, leaves[0], path));
+}
+
+/// Stub hook for the mode-dispatch test: builds the tree with the library's own
+/// CPU path (not `init`, to avoid recursion through the hook).
+fn cpuCommit(allocator: std.mem.Allocator, leaves: []const Hash.Digest) anyerror!?MerkleTree {
+    const tree = try MerkleTree.buildCpu(allocator, leaves);
+    return tree;
+}
+
+test "merkle accelerator hook dispatch (off/on/auto)" {
+    const alloc = std.testing.allocator;
+    const leaves = [_]Hash.Digest{
+        Hash.hashBytes("a"), Hash.hashBytes("b"),
+        Hash.hashBytes("c"), Hash.hashBytes("d"),
+    };
+    var ref = try MerkleTree.init(alloc, &leaves); // CPU reference
+    defer ref.deinit();
+
+    const saved_mode = mode;
+    const saved_hook = merkle_commit;
+    defer {
+        mode = saved_mode;
+        merkle_commit = saved_hook;
+    }
+
+    // .auto + registered hook -> uses the hook.
+    mode = .auto;
+    merkle_commit = cpuCommit;
+    var t1 = try MerkleTree.init(alloc, &leaves);
+    defer t1.deinit();
+    try std.testing.expectEqualSlices(u8, &ref.root(), &t1.root());
+
+    // .off ignores the registered hook -> CPU path.
+    mode = .off;
+    var t2 = try MerkleTree.init(alloc, &leaves);
+    defer t2.deinit();
+    try std.testing.expectEqualSlices(u8, &ref.root(), &t2.root());
+
+    // .on + no hook -> error.GpuUnavailable.
+    merkle_commit = null;
+    mode = .on;
+    try std.testing.expectError(error.GpuUnavailable, MerkleTree.init(alloc, &leaves));
 }

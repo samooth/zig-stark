@@ -45,7 +45,19 @@ details live in `docs/binius.md`, `docs/protocol.md`, and `docs/wire.md`.
   (`zig build cuda-circlefft`, kernels in `src/cuda/kernels/circlefft.cu`).
   Current speedups are modest (1.1-1.3x, kernel-launch bound); the win will
   come from fusing the per-layer launches once NTTE-style batched rotations
-  land. Next: E3 — Merkle (Blake3) hashing.
+  land. E3 landed: the Blake3 Merkle tree builder runs on the GPU via a
+  `merkle_commit` hook in `core/merkle/merkle.zig` (`GpuMode` auto/on/off,
+  default `auto`, hook null by default so the library stays CPU-only). Only the
+  internal `hash2(left,right)` reduce runs on the GPU (`src/cuda/merkle_gpu.zig`
+  + `src/cuda/kernels/merkle.cu`, a reference Blake3 compression in CUDA C);
+  leaves are still hashed on the CPU. The result is bit-exact with the CPU tree
+  at every level for n = 2^0..2^16 (`zig build cuda-merkle`). Unlike E1/E2, the
+  naive per-node Blake3 kernel does NOT beat vectorized CPU Blake3 at the sizes
+  tested — in ReleaseFast the GPU path is ~10x slower per node (serialization-
+  bound: a single Blake3 hash is a short sequential chain), so enabling it
+  currently regresses rather than accelerates. The win would need a register-
+  optimized / host-pinned Blake3 kernel or a fused multi-node launch; the hook
+  and bit-exact path are the integration milestone.
 - **Smaller batch openings.** The remaining proof-size gap is the batch-proof
   internals: batched FRI queries (combine `q` queries into one response
   polynomial per layer), a Brakedown-style batched eval sum-check, and

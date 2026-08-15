@@ -251,6 +251,8 @@ pub fn build(b: *std.Build) void {
     cuda_kernels_step.dependOn(&nvcc_sumcheck.step);
     const nvcc_circlefft = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/circlefft.ptx", "src/cuda/kernels/circlefft.cu" });
     cuda_kernels_step.dependOn(&nvcc_circlefft.step);
+    const nvcc_merkle = b.addSystemCommand(&.{ "nvcc", "-ptx", "-arch=sm_86", "-o", "src/cuda/kernels/merkle.ptx", "src/cuda/kernels/merkle.cu" });
+    cuda_kernels_step.dependOn(&nvcc_merkle.step);
 
     const cuda_hello_step = b.step("cuda-hello", "Build+run the CUDA hello kernel (requires GPU + driver)");
     const hello_mod = b.createModule(.{
@@ -312,4 +314,20 @@ pub fn build(b: *std.Build) void {
     const circlefft_exe = b.addExecutable(.{ .name = "cuda_circlefft", .root_module = circlefft_mod });
     const run_circlefft = b.addRunArtifact(circlefft_exe);
     cuda_circlefft_step.dependOn(&run_circlefft.step);
+
+    // E3: Blake3 Merkle tree building via the merkle_commit hook.
+    const cuda_merkle_step = b.step("cuda-merkle", "Build+run the Blake3 Merkle tree GPU test (requires GPU + driver)");
+    const merkle_mod = b.createModule(.{
+        .root_source_file = b.path("src/cuda/merkle_test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "zig-stark", .module = lib },
+        },
+    });
+    merkle_mod.linkSystemLibrary("cuda", .{});
+    const merkle_exe = b.addExecutable(.{ .name = "cuda_merkle", .root_module = merkle_mod });
+    const run_merkle = b.addRunArtifact(merkle_exe);
+    cuda_merkle_step.dependOn(&run_merkle.step);
 }

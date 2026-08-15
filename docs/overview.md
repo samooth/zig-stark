@@ -111,6 +111,7 @@ zig build cuda-hello # CUDA validation kernel (GPU + driver); cuda-kernels regen
 zig build cuda-gf     # Gf256 field-mul kernel: bit-exactness vs the CPU tower
 zig build cuda-sumcheck # Gf256/Gf2_128 sum-check rounds on the GPU (bit-exact + Stark proof compare)
 zig build cuda-circlefft # M31 circle FFT on the GPU (bit-exact fwd+inv vs ntt/circle.zig)
+zig build cuda-merkle # Blake3 Merkle tree build on the GPU (bit-exact vs core/merkle.zig)
 zig test src/root.zig # equivalent unit-test entry point
 ```
 

@@ -276,6 +276,15 @@ fall back to CPU.
   only the per-layer butterfly, bit-reversal and (de)interleave kernels
   (`src/cuda/kernels/circlefft.cu`) run on the GPU. Sizes below lg = 3 and
   missing GPUs fall back to the CPU transform.
+- `zig build cuda-merkle` — Blake3 Merkle tree build on the GPU: every level
+  bit-exact with `core/merkle.zig` for n = 2^0..2^16, plus a CPU-vs-GPU timing.
+  Only the internal `hash2(left,right)` reduce runs on the GPU
+  (`src/cuda/merkle_gpu.zig` + `src/cuda/kernels/merkle.cu`, a reference Blake3
+  compression in CUDA C); leaves are hashed on the CPU. It is wired through a
+  `merkle_commit` hook in `core/merkle/merkle.zig` (`GpuMode` auto/on/off, hook
+  null by default so the library stays CPU-only). NOTE: the naive per-node Blake3
+  kernel is serialization-bound and is currently *slower* than vectorized CPU
+  Blake3 in optimized builds; the GPU path is a correctness/integration milestone.
 - `zig build cuda-kernels` — regenerate `src/cuda/kernels/*.ptx` with `nvcc`
   (the committed PTX keeps the default build free of the CUDA toolkit).
 
@@ -287,5 +296,5 @@ registers the `gf256_values`/`gf128_values` evaluators; `accel.mode`
 use them — `auto` falls back to CPU when no hook is registered, `on` errors
 with `error.GpuUnavailable`, `off` never touches the GPU. This is E1 of the
 GPU roadmap (Gf256 then Gf2_128 bit-sliced field mul). E2 (landed) is the M31
-circle FFT via `src/cuda/circlefft_gpu.zig`; E3 will be Merkle (Blake3)
-hashing.
+circle FFT via `src/cuda/circlefft_gpu.zig`; E3 (landed) is the Blake3 Merkle
+tree via `core/merkle/merkle.zig`'s `merkle_commit` hook + the kernels above.
