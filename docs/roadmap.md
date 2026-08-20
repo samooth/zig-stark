@@ -16,17 +16,30 @@
   binding for browsers (`bindings/js/`) and a native N-API addon for Node
   (`bindings/node/`).
 - Toolchain/quality: Zig 0.16.0 stable pinned in CI and a SHA-verified
-  `Dockerfile`; 223 tests (207 unit + 16 e2e, leak-checked); published
-  benchmarks; Apache-2.0.
+  `Dockerfile`; tests (leak-checked); published benchmarks; Apache-2.0.
 
 The original TODO milestone list is fully implemented; protocol and soundness
 details live in `docs/binius.md`, `docs/protocol.md`, and `docs/wire.md`.
 
+## In progress
+
+- **Recursive verification (R0 done).** The friendly-hash decision is settled:
+  Poseidon2b over `Gf2_64` (`F`) / `Gf2_128` (`E`), `t = 8`, `R_F = 10`,
+  `R_P = 29` (ePrint 2025/1893, Table 1), transcribed from the
+  `Poseidon-Hash/Poseidon2b` reference circuit. `src/binius/recursion/`
+  (`poseidon2b.zig`, `hash.zig`) provides the permutation gadget, a sponge
+  `hashBytes`/`hash2`, and known-answer vectors; the permutation proves and
+  verifies inside the zero-check STARK bit-exact over `Gf2_64`/`Gf2_128`
+  (first stack exercise with `F.SIZE = 8`). Study, parameters, and the R0.5–R4
+  plan live in `docs/recursion.md`.
+
 ## Future work
 
-- **Recursive verification.** Turn the FRI-Binius verifier into an AIR/gadget so
-  proofs verify proofs (proof recursion / composition), the natural next step for
-  folding schemes.
+- **Recursive verification (R0.5–R4).** Switch the transcript / Merkle / FRI /
+  sum-check transcripts through the friendly hash (R0.5, breaks proof byte
+  identity but keeps GPU↔CPU), then build the verifier-arithmetic, sum-check
+  round, Merkle-path, FRI PCS, and full `StarkInner.verify` gadgets
+  (proof-of-verification end-to-end). See `docs/recursion.md`.
 - **GPU (Phase E, in progress).** Native CUDA acceleration for the server-side
   prover. E0a (toolchain) landed: Zig 0.16 cannot emit nvptx kernels (the LLVM
   backend errors and there is no self-hosted backend), so kernels are CUDA C

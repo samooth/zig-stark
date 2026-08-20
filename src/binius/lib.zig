@@ -18,6 +18,7 @@ pub const batchpcs = @import("batchpcs.zig");
 pub const addfri = @import("addfri.zig");
 pub const fripcs = @import("fripcs.zig");
 pub const accel = @import("accel.zig");
+pub const recursion = @import("recursion/lib.zig");
 
 test {
     std.testing.refAllDecls(@This());
