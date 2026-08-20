@@ -16,7 +16,8 @@
   binding for browsers (`bindings/js/`) and a native N-API addon for Node
   (`bindings/node/`).
 - Toolchain/quality: Zig 0.16.0 stable pinned in CI and a SHA-verified
-  `Dockerfile`; tests (leak-checked); published benchmarks; Apache-2.0.
+  `Dockerfile`; 232 tests (216 library + 16 e2e, all leak-checked); published
+  benchmarks; Apache-2.0.
 
 The original TODO milestone list is fully implemented; protocol and soundness
 details live in `docs/binius.md`, `docs/protocol.md`, and `docs/wire.md`.
