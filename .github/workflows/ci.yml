@@ -10,7 +10,7 @@ jobs:
     name: build, fmt, test (Zig 0.16.0)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: ziglang/setup-zig@v2
         with:
@@ -32,15 +32,15 @@ jobs:
     name: wasm C ABI (wasm32-freestanding) + Node smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: ziglang/setup-zig@v2
         with:
           version: 0.16.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: '22'
 
       - name: Build the wasm C-ABI module
         run: zig build wasm -Doptimize=ReleaseSmall
@@ -54,7 +54,7 @@ jobs:
     name: gadget fuzz
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: ziglang/setup-zig@v2
         with:
